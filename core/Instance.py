@@ -4,13 +4,16 @@ from scipy.stats import poisson
 
 
 class Node:
-    def __init__(self, id: int, x: float, y: float, mean_demand: float, is_depot: bool = False):
+    def __init__(self, id: int, x: float, y: float, mean_demand: float, is_depot: bool = False, is_split: bool = False, alpha =1.0):
         """Node with coordinates and Poisson demand parameter."""
         self.id = id
         self.x = x
         self.y = y
         self.demand_lambda = mean_demand
+        self.is_split = is_split
         self.is_depot = is_depot
+        self.alpha = alpha  # fraction for split deliveries (if is_split=True)
+        
         
     
     def distance_to(self, other: 'Node') -> float:
@@ -56,6 +59,8 @@ class ProblemInstance:
     
     def get_expected_demand(self, node: Node) -> float:
         """Get expected demand for node (lambda parameter)."""
+        if node.is_split :
+            return node.demand_lambda * node.alpha
         return node.demand_lambda
     
     def validate(self) -> bool:
