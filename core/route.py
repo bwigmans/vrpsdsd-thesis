@@ -1,6 +1,6 @@
 from typing import List
 from scipy.stats import poisson
-from instance import Node, ProblemInstance
+from core.instance import Node, ProblemInstance
 
 
 class Route:

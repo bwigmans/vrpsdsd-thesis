@@ -2,7 +2,8 @@
 from typing import List
 
 from core.route import Route
-
+from cost.calculator import CostCalculator, ExactCostCalculator
+from core.recourse import RecoursePolicy, PairedVehicleRecourse
 # Placeholder for the complete solution class that will manage multiple routes and compute overall costs.
 class Solution:
     def __init__(self, routes: List[Route]):
@@ -17,7 +18,8 @@ class Solution:
     
     def total_recourse_cost(self, cost_calculator: 'CostCalculator') -> float:
         """Compute total recourse cost using specified calculator."""
-        pass
+        return sum(cost_calculator.compute_recourse_cost(route) for route in self.routes)
+        
     
     def is_feasible(self) -> bool:
         """Check if solution respects vehicle capacity constraints."""
@@ -25,7 +27,7 @@ class Solution:
     
     def get_total_cost(self, cost_calculator: 'CostCalculator') -> float:
         """Compute total cost (travel + recourse)."""
-        pass
+        return self.total_travel_cost() + self.total_recourse_cost(cost_calculator)
     
     def copy(self) -> 'Solution':
         """Create a deep copy of the solution."""
