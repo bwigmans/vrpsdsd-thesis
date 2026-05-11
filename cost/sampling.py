@@ -108,3 +108,5 @@ if __name__ == "__main__":
     sample_std = np.std(sample_costs)
     print(f"Sampling mean: {sample_mean:.4f} ± {sample_std/np.sqrt(10000):.4f}")
     print(f"Zero cost samples: {np.sum(np.array(sample_costs)==0)} / 10000")
+
+    print(f"Exact cost: {exact_calc.total_expected_cost(route=route):.4f}, Sampling mean: {sample_mean:.4f}, Std error: {sample_std/np.sqrt(10000):.4f}")

@@ -6,6 +6,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.recourse import RecoursePolicy
 from core.route import Route
 from core.instance import Node, ProblemInstance
+import numpy as np
+from cost.sampling_strategy import MonteCarloStrategy
 
 
 class CostCalculator(ABC):
@@ -63,6 +65,20 @@ class ExactCostCalculator(CostCalculator):
             total += prob_first * s_i + prob_second * s_bar
 
         return total
+    
+class MonteCarloCostCalculator(CostCalculator):
+    """Cost calculator that approximates expected recourse cost via Monte Carlo sampling."""
+
+    def __init__(self, recourse_policy: RecoursePolicy, num_samples: int = 1000, seed: int = None):
+        self.recourse_policy = recourse_policy
+        self.num_samples = num_samples
+        self.seed = seed
+    def compute_recourse_cost(self, route):
+       
+        strategy = MonteCarloStrategy(self.recourse_policy, num_samples=self.num_samples, seed=self.seed, parallel=False)
+        sample_costs = strategy.sample(route, num_samples=self.num_samples)
+        sample_mean = np.mean(sample_costs)
+        return float(sample_mean)
     
 if __name__ == "__main__":
     # Test ExactCostCalculator with a simple route

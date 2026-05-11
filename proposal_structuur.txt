@@ -1,0 +1,65 @@
+Problem Description
+
+Problem Definition and Notation
+Stochastic Demands and Assumptions
+Recourse Policy and Failure Handling
+Split Deliveries and Adaptive Split Proportions
+
+Define split vertices and paired routes
+State Proposition 1 as a retained structural heuristic with justification
+Define αi∈(0,1)\alpha_i \in (0,1)
+αi​∈(0,1) as a decision variable, not a fixed parameter
+Forward reference: *"The determination of αi\alpha_i
+αi​ is discussed in Section X."*
+
+
+Objective Function F(R)=ϕ(R)+E[ψ(R)]F(R) = \phi(R) + E[\psi(R)]
+F(R)=ϕ(R)+E[ψ(R)]
+
+
+Methodology
+
+Overview of ALNS
+Solution Representation
+
+Routes, pairings, and αi\alpha_i
+αi​ as part of the solution encoding
+
+
+Expected Cost Estimation via Monte Carlo Sampling
+
+Replaces the exact convolution of \cite{lei2012}, enabling arbitrary demand distributions
+SAA approximation of E[ψ(R)]E[\psi(R)]
+E[ψ(R)]
+Sample reuse across evaluations
+
+
+Adaptive Split Proportion Optimization
+
+4.1 Problem: choosing αi\alpha_i
+αi​ per split vertex
+
+αi\alpha_i
+αi​ is optimized locally per route pair as a small subproblem
+Uses realized demands before the split node and expected demands after
+
+
+4.2 Method: equalize remaining slack
+
+Closed-form O(1) solution per scenario
+
+
+4.3 Integration with ALNS
+
+αi\alpha_i
+αi​ is updated whenever the route pair structure changes during the search
+
+
+
+
+Initial Solution Construction
+Removal Operators
+Insertion Operators
+Adaptive Operator Selection Mechanism
+Acceptance Criterion (Record-to-Record Travel)
+Stopping Criteria
