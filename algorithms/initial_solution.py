@@ -35,7 +35,7 @@ class InitialSolutionBuilder:
     def _sort_nodes_by_expected_demand(self) -> List[Node]:
         """Sort nodes by increasing expected demand."""
         return sorted([n for n in self.instance.nodes if not n.is_depot],
-                      key=lambda n: n.demand_lambda)
+                      key=lambda n: n.mean_demand)
 
     def _cheapest_insertion(self, solution: Solution, node: Node) -> bool:
         """Insert node at position with minimal cost increase."""
@@ -76,9 +76,9 @@ class InitialSolutionBuilder:
                 alpha2 = 1.0 - alpha1
                 if alpha1 <= 0 or alpha1 >= 1:
                     continue
-                node1 = Node(node.id, node.x, node.y, node.demand_lambda,
+                node1 = Node(node.id, node.x, node.y, node.mean_demand,
                              is_depot=False, is_split=True, alpha=alpha1)
-                node2 = Node(node.id, node.x, node.y, node.demand_lambda,
+                node2 = Node(node.id, node.x, node.y, node.mean_demand,
                              is_depot=False, is_split=True, alpha=alpha2)
                 if (self._can_insert_split(r1, node1) and
                     self._can_insert_split(r2, node2)):

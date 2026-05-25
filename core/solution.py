@@ -1,5 +1,6 @@
 
-from typing import List
+from copy import deepcopy
+from typing import Dict, List
 
 from core.route import Route
 from cost.calculator import CostCalculator, ExactCostCalculator
@@ -9,6 +10,8 @@ class Solution:
     def __init__(self, routes: List[Route]):
         """Complete solution with multiple routes."""
         self.routes = routes
+        self.paired_routes: Dict[Route, Route] = {}
+        self._split_id_counter = -1
 
     
     def total_travel_cost(self) -> float:
@@ -31,5 +34,16 @@ class Solution:
     
     def copy(self) -> 'Solution':
         """Create a deep copy of the solution."""
-        copied_routes = [Route(route.nodes.copy(), route.instance) for route in self.routes]
-        return Solution(copied_routes)
+        route_map = {}
+        copied_routes = []
+        for route in self.routes:
+            copied_nodes = deepcopy(route.nodes)
+            new_route = Route(copied_nodes, route.instance)
+            copied_routes.append(new_route)
+            route_map[route] = new_route
+        copied_solution = Solution(copied_routes)
+        copied_solution._split_id_counter = self._split_id_counter
+        for old_route, paired in self.paired_routes.items():
+            if old_route in route_map and paired in route_map:
+                copied_solution.paired_routes[route_map[old_route]] = route_map[paired]
+        return copied_solution

@@ -15,11 +15,10 @@ class Route:
         For unsplit vertices: full expected demand.
         For split vertices: α * expected demand (only the fraction assigned to this route).
         """
-        lam = self.instance.get_expected_demand(node)
         if node.is_split:
-            # Assumes Node has attribute split_alpha (float in (0,1))
-            return lam * node.alpha
-        return lam
+            return node.mean_demand * node.alpha
+        return node.mean_demand
+        
 
     def travel_cost(self) -> float:
         """Compute total travel distance."""
@@ -43,6 +42,7 @@ class Route:
         where Q = vehicle capacity (assumed integer).
         Position is index in self.nodes (must be >= 1, i.e., a customer vertex).
         """
+       
         if position <= 0 or position >= len(self.nodes):
             raise ValueError("Position must be a customer vertex (index >= 1 and < len(nodes))")
 
@@ -53,17 +53,19 @@ class Route:
         cum_before = 0.0
         for j in range(1, position):
             cum_before += self._planned_demand(self.nodes[j])
-
+        # print(f"cum_before at position 1: {cum_before}")
         # Demand distribution for this vertex (full or split)
         lam_vertex = self._planned_demand(node)
-
+        print(f"node.is_split={node.is_split}, node.alpha={node.alpha}, node.mean_demand={node.mean_demand}")
+        print(f"lam_vertex={lam_vertex}")
         prob = 0.0
         # l runs from 1 to Q (demand values that cause second-type failure)
         for l in range(1, Q + 1):
-            # P(ξ_i = l) for Poisson with mean lam_vertex
+                # P(ξ_i = l) for Poisson with mean lam_vertex
             p_demand = poisson.pmf(l, lam_vertex)
-            # P(X_{i-1} = Q - l)
             p_cum = poisson.pmf(Q - l, cum_before)
+            if p_demand * p_cum > 1e-10:
+                print(f"  l={l}, p_demand={p_demand:.6f}, p_cum={p_cum:.6f}, product={p_demand*p_cum:.6f}")
             prob += p_demand * p_cum
         return prob
 

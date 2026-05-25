@@ -10,6 +10,12 @@ class RecoursePolicy(ABC):
         """Compute recourse cost for given demand realization."""
         pass
 
+    def compute_vertex_costs(
+        self, route: Route, demand_realization: List[float]
+    ) -> Dict['Node', float]:
+        """Compute per-vertex recourse cost contributions for a realization."""
+        raise NotImplementedError
+
 
 class PairedVehicleRecourse(RecoursePolicy):
     def __init__(self, paired_routes: Dict[Route, Route] = None):
@@ -55,6 +61,43 @@ class PairedVehicleRecourse(RecoursePolicy):
                 remaining -= demand
 
         return total_recourse
+
+    def compute_vertex_costs(
+        self, route: Route, demand_realization: List[float]
+    ) -> Dict['Node', float]:
+        """Return per-vertex recourse costs for a demand realization."""
+        Q = route.instance.vehicle_capacity
+        remaining = Q
+        nodes = route.nodes
+        customers = [n for n in nodes if not n.is_depot]
+
+        if len(demand_realization) != len(customers):
+            raise ValueError("demand_realization length must equal number of customers")
+
+        costs = {node: 0.0 for node in customers}
+
+        for i, (node, demand_total) in enumerate(zip(customers, demand_realization)):
+            if i + 1 < len(customers):
+                next_node = customers[i + 1]
+            else:
+                next_node = nodes[0]
+
+            demand = demand_total * node.alpha if node.is_split else demand_total
+
+            if demand > remaining + 1e-9:
+                cost, remaining = self._handle_type1_failure(
+                    route, node, next_node, remaining, demand
+                )
+                costs[node] += cost
+            elif abs(demand - remaining) < 1e-9:
+                cost, remaining = self._handle_type2_failure(
+                    route, node, next_node
+                )
+                costs[node] += cost
+            else:
+                remaining -= demand
+
+        return costs
 
     def _handle_type1_failure(
         self, route: Route, node, next_node, remaining: float, demand: float

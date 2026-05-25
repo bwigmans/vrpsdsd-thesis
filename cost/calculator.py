@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,13 +14,17 @@ class CostCalculator(ABC):
     """Abstract base class for cost calculation strategies."""
 
     @abstractmethod
-    def compute_recourse_cost(self, route: Route) -> float:
+    def compute_recourse_cost(
+        self, route: Route, samples: Optional[np.ndarray] = None
+    ) -> float:
         """Compute expected recourse cost E[ψ(r_k)] for a single route."""
         pass
 
-    def total_expected_cost(self, route: Route) -> float:
+    def total_expected_cost(
+        self, route: Route, samples: Optional[np.ndarray] = None
+    ) -> float:
         """Return φ(r_k) + E[ψ(r_k)] (Equation 1)."""
-        return route.travel_cost() + self.compute_recourse_cost(route)
+        return route.travel_cost() + self.compute_recourse_cost(route, samples=samples)
 
 
 class ExactCostCalculator(CostCalculator):
@@ -32,7 +36,9 @@ class ExactCostCalculator(CostCalculator):
     def __init__(self, recourse_policy: RecoursePolicy):
         self.recourse_policy = recourse_policy
 
-    def compute_recourse_cost(self, route: Route) -> float:
+    def compute_recourse_cost(
+        self, route: Route, samples: Optional[np.ndarray] = None
+    ) -> float:
         """
         Compute exact expected recourse cost using Poisson distributions.
         Formula: Σ_i (κ_i * s_i + λ_i * s̄_i) where:
@@ -40,6 +46,8 @@ class ExactCostCalculator(CostCalculator):
           λ_i = probability of second‑type failure (exact fill)
           s_i, s̄_i = recourse costs from Proposition 2.
         """
+        if samples is not None:
+            raise ValueError("ExactCostCalculator does not accept precomputed samples.")
         if len(route.nodes) <= 2:  # only depot or depot+single customer?
             return 0.0
 
@@ -73,10 +81,19 @@ class MonteCarloCostCalculator(CostCalculator):
         self.recourse_policy = recourse_policy
         self.num_samples = num_samples
         self.seed = seed
-    def compute_recourse_cost(self, route):
-       
-        strategy = MonteCarloStrategy(self.recourse_policy, num_samples=self.num_samples, seed=self.seed, parallel=False)
-        sample_costs = strategy.sample(route, num_samples=self.num_samples)
+        self.strategy = MonteCarloStrategy(
+            self.recourse_policy,
+            num_samples=self.num_samples,
+            seed=self.seed,
+            parallel=False,
+        )
+
+    def compute_recourse_cost(
+        self, route: Route, samples: Optional[np.ndarray] = None
+    ) -> float:
+        sample_costs = self.strategy.sample(
+            route, num_samples=self.num_samples, samples=samples
+        )
         sample_mean = np.mean(sample_costs)
         return float(sample_mean)
     
@@ -110,12 +127,12 @@ if __name__ == "__main__":
     # Cost calculator
     calc = ExactCostCalculator(DummyRecoursePolicy())
     print("=== Testing ExactCostCalculator ===")
-    print(f"Route 1 (unsplit):")
+    print("Route 1 (unsplit):")
     print(f"  Travel cost: {route1.travel_cost():.2f}")
     print(f"  Expected recourse cost: {calc.compute_recourse_cost(route1):.6f}")
     print(f"  Total expected cost: {calc.total_expected_cost(route1):.2f}")
 
-    print(f"\nRoute 2 (split node, alpha=0.6):")
+    print("\nRoute 2 (split node, alpha=0.6):")
     print(f"  Planned demand: {route2.expected_load():.2f}")
     print(f"  Travel cost: {route2.travel_cost():.2f}")
     print(f"  Failure prob: {route2.failure_probabilities()[0]:.6f}")

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 import numpy as np
 import sys
 import os
@@ -16,10 +16,14 @@ class SamplingCostCalculator(CostCalculator):
         self.recourse_policy = recourse_policy
         self.sampling_strategy = sampling_strategy
 
-    def compute_recourse_cost(self, route: Route) -> float:
+    def compute_recourse_cost(
+        self, route: Route, samples: Optional[np.ndarray] = None
+    ) -> float:
         """Approximate expected recourse cost via Monte Carlo sampling."""
         # Delegate to the sampling strategy which returns a list of sample costs
-        sample_costs = self.sampling_strategy.sample(route, self.sampling_strategy.num_samples)
+        sample_costs = self.sampling_strategy.sample(
+            route, self.sampling_strategy.num_samples, samples=samples
+        )
         # Return the average (expected value)
         return float(np.mean(sample_costs))
 
@@ -31,15 +35,18 @@ class SamplingCostCalculator(CostCalculator):
         """
         customers = [n for n in route.nodes if not n.is_depot]
         samples = []
-        rng = np.random.default_rng(self.sampling_strategy.seed)
+        rng = self.sampling_strategy.rng
         for _ in range(num_samples):
             realization = []
             for node in customers:
-                lam = route.instance.get_expected_demand(node)
-                demand = rng.poisson(lam)
+                dist = route.instance.get_demand_distribution(node)
+                demand = dist.rvs(random_state=rng)
                 realization.append(float(demand))
             samples.append(realization)
         return samples
+    
+
+
 if __name__ == "__main__":
     depot = Node(0, 0, 0, 0, is_depot=True)
     cust1 = Node(1, 3, 4, 4.0)  
@@ -109,4 +116,7 @@ if __name__ == "__main__":
     print(f"Sampling mean: {sample_mean:.4f} ± {sample_std/np.sqrt(10000):.4f}")
     print(f"Zero cost samples: {np.sum(np.array(sample_costs)==0)} / 10000")
 
-    print(f"Exact cost: {exact_calc.total_expected_cost(route=route):.4f}, Sampling mean: {sample_mean:.4f}, Std error: {sample_std/np.sqrt(10000):.4f}")
+    print(
+        f"Exact cost: {exact_calc.total_expected_cost(route=route):.4f}, "
+        f"Sampling mean: {sample_mean:.4f}, Std error: {sample_std/np.sqrt(10000):.4f}"
+    )

@@ -34,9 +34,21 @@ class MonteCarloStrategy(SamplingStrategy):
         self.seed = seed
         self.parallel = parallel
         self.num_threads = num_threads or 4
+        self.rng = np.random.default_rng(self.seed)
 
-    def sample(self, route: Route, num_samples: Optional[int] = None) -> List[float]:
+    def sample(
+        self,
+        route: Route,
+        num_samples: Optional[int] = None,
+        samples: Optional[np.ndarray] = None,
+    ) -> List[float]:
         """Perform Monte Carlo sampling of recourse costs."""
+        if samples is not None:
+            costs = []
+            for demands in samples:
+                costs.append(self.recourse_policy.compute_cost(route, list(demands)))
+            return costs
+
         ns = num_samples or self.num_samples
         if self.parallel:
             return self._parallel_sample(route, ns)
@@ -46,7 +58,7 @@ class MonteCarloStrategy(SamplingStrategy):
     def _sequential_sample(self, route: Route, num_samples: int) -> List[float]:
         """Sequential sampling (single thread)."""
         costs = []
-        rng = np.random.default_rng(self.seed)
+        rng = self.rng
         for _ in range(num_samples):
             demands = self._generate_demands(route, rng)
             cost = self.recourse_policy.compute_cost(route, demands)
@@ -92,9 +104,14 @@ class MonteCarloStrategy(SamplingStrategy):
         customers = [n for n in route.nodes if not n.is_depot]
         demands = []
         for node in customers:
-            # Poisson demand with lambda = node.mean_demand
-            lam = route.instance.get_expected_demand(node)
-            # Use rng.poisson for reproducibility
-            demand = rng.poisson(lam)
+            dist = route.instance.get_demand_distribution(node)
+            demand = dist.rvs(random_state=rng)
             demands.append(float(demand))
         return demands
+
+    def generate_demands(
+        self, route: Route, rng: Optional[np.random.Generator] = None
+    ) -> List[float]:
+        """Public wrapper to generate a single demand realization."""
+        rng = rng or self.rng
+        return self._generate_demands(route, rng)
