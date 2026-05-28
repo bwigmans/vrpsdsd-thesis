@@ -4,12 +4,23 @@ from scipy.stats import poisson
 
 
 class Node:
-    def __init__(self, id: int, x: float, y: float, mean_demand: float, is_depot: bool = False, is_split: bool = False, alpha =1.0):
+    def __init__(
+        self,
+        id: int,
+        x: float,
+        y: float,
+        mean_demand: float,
+        is_depot: bool = False,
+        is_split: bool = False,
+        alpha: float = 1.0,
+        demand_distribution = poisson,
+    ):
         """Node with coordinates and Poisson demand parameter."""
         self.id = id
         self.x = x
         self.y = y
-        self.demand_lambda = mean_demand
+        self.mean_demand = mean_demand
+        self.demand_distribution = demand_distribution
         self.is_split = is_split
         self.is_depot = is_depot
         self.alpha = alpha  # fraction for split deliveries (if is_split=True)
@@ -48,20 +59,31 @@ class ProblemInstance:
     def get_distance(self, node_i: Node, node_j: Node) -> float:
         """Get distance between two nodes."""
         if self.distance_matrix is not None:
-            return self.distance_matrix[node_i.id, node_j.id]
-        else:
-            return node_i.distance_to(node_j)
+            n = self.distance_matrix.shape[0]
+            if 0 <= node_i.id < n and 0 <= node_j.id < n:
+                return self.distance_matrix[node_i.id, node_j.id]
+        return node_i.distance_to(node_j)
 
     def get_demand_distribution(self, node: Node):
-        """Get Poisson distribution for node's demand."""
-        return poisson(mu=node.demand_lambda)
+        dist = node.demand_distribution
+        # already a frozen distribution (has been instantiated with parameters)
+        if hasattr(dist, "dist") and hasattr(dist, "args"):
+            return dist
+        # it's a distribution class, instantiate it with mean_demand
+        try:
+            return dist(mu=node.mean_demand)
+        except TypeError:
+            try:
+                return dist(node.mean_demand)
+            except TypeError:
+                return dist
        
     
     def get_expected_demand(self, node: Node) -> float:
         """Get expected demand for node (lambda parameter)."""
-        if node.is_split :
-            return node.demand_lambda * node.alpha
-        return node.demand_lambda
+        # if node.is_split :
+        #     return node.mean_demand * node.alpha
+        return node.mean_demand
     
     def validate(self) -> bool:
         """Validate instance consistency."""
