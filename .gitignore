@@ -205,3 +205,31 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Thesis experiments and scratch scripts
+ideas.md
+run_ballpark.py
+run_c101_ablation.py
+run_c101_noscale.py
+run_c101_test.py
+run_ec_operators_full.py
+run_rc101.py
+run_single_instance.py
+run_splits_restart.py
+run_unsplit.py
+run_sampling_comparison.py
+test_dfsi_fix.py
+test_sampling_poisson.py
+test_si_fallback.py
+try_splits.py
+try_splits_hardcoded.py
+verify_alpha.py
+verify_solution.py
+verify_split_decomposition.py
+
+# Results and precomputed data
+results/
+data/samples/
+
+# PDFs
+*.pdf

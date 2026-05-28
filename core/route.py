@@ -53,19 +53,14 @@ class Route:
         cum_before = 0.0
         for j in range(1, position):
             cum_before += self._planned_demand(self.nodes[j])
-        # print(f"cum_before at position 1: {cum_before}")
         # Demand distribution for this vertex (full or split)
         lam_vertex = self._planned_demand(node)
-        print(f"node.is_split={node.is_split}, node.alpha={node.alpha}, node.mean_demand={node.mean_demand}")
-        print(f"lam_vertex={lam_vertex}")
         prob = 0.0
         # l runs from 1 to Q (demand values that cause second-type failure)
         for l in range(1, Q + 1):
                 # P(ξ_i = l) for Poisson with mean lam_vertex
             p_demand = poisson.pmf(l, lam_vertex)
             p_cum = poisson.pmf(Q - l, cum_before)
-            if p_demand * p_cum > 1e-10:
-                print(f"  l={l}, p_demand={p_demand:.6f}, p_cum={p_cum:.6f}, product={p_demand*p_cum:.6f}")
             prob += p_demand * p_cum
         return prob
 

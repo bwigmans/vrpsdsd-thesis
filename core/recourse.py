@@ -6,7 +6,9 @@ from core.route import Route
 
 class RecoursePolicy(ABC):
     @abstractmethod
-    def compute_cost(self, route: Route, demand_realization: List[float]) -> float:
+    def compute_cost(
+        self, route: Route, demand_realization: List[float], paired_route=None
+    ) -> float:
         """Compute recourse cost for given demand realization."""
         pass
 
@@ -14,7 +16,7 @@ class RecoursePolicy(ABC):
         self, route: Route, demand_realization: List[float]
     ) -> Dict['Node', float]:
         """Compute per-vertex recourse cost contributions for a realization."""
-        raise NotImplementedError
+        pass
 
 
 class PairedVehicleRecourse(RecoursePolicy):
@@ -22,11 +24,14 @@ class PairedVehicleRecourse(RecoursePolicy):
         """Initialize with route pairings for split deliveries."""
         self.paired_routes = paired_routes or {}
 
-    def compute_cost(self, route: Route, demand_realization: List[float]) -> float:
+    def compute_cost(
+        self, route: Route, demand_realization: List[float], paired_route: Optional[Route] = None
+    ) -> float:
         """
         Simulate the route with realized demands and compute extra recourse cost.
         Uses non‑cooperative paired vehicle policy (cooperative not implemented as it
         yields negligible gains per the paper).
+        paired_route is stored for use by adaptive alpha policies.
         """
         Q = route.instance.vehicle_capacity
         remaining = Q
@@ -44,8 +49,7 @@ class PairedVehicleRecourse(RecoursePolicy):
             else:
                 next_node = nodes[0]  # depot
 
-            # Planned fraction for split vertices
-            demand = demand_total * node.alpha if node.is_split else demand_total
+            demand = demand_total
 
             if demand > remaining + 1e-9:  # Type 1 failure
                 cost, remaining = self._handle_type1_failure(
@@ -63,7 +67,7 @@ class PairedVehicleRecourse(RecoursePolicy):
         return total_recourse
 
     def compute_vertex_costs(
-        self, route: Route, demand_realization: List[float]
+        self, route: Route, demand_realization: List[float], paired_route: Optional[Route] = None
     ) -> Dict['Node', float]:
         """Return per-vertex recourse costs for a demand realization."""
         Q = route.instance.vehicle_capacity
@@ -82,7 +86,7 @@ class PairedVehicleRecourse(RecoursePolicy):
             else:
                 next_node = nodes[0]
 
-            demand = demand_total * node.alpha if node.is_split else demand_total
+            demand = demand_total
 
             if demand > remaining + 1e-9:
                 cost, remaining = self._handle_type1_failure(

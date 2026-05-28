@@ -59,9 +59,10 @@ class ProblemInstance:
     def get_distance(self, node_i: Node, node_j: Node) -> float:
         """Get distance between two nodes."""
         if self.distance_matrix is not None:
-            return self.distance_matrix[node_i.id, node_j.id]
-        else:
-            return node_i.distance_to(node_j)
+            n = self.distance_matrix.shape[0]
+            if 0 <= node_i.id < n and 0 <= node_j.id < n:
+                return self.distance_matrix[node_i.id, node_j.id]
+        return node_i.distance_to(node_j)
 
     def get_demand_distribution(self, node: Node):
         dist = node.demand_distribution

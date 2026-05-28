@@ -1,17 +1,18 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import random
 import numpy as np
 from core.instance import Node
 from core.solution import Solution
 from core.route import Route
 from cost.calculator import CostCalculator
+from algorithms.alpha_policies import compute_alpha
 
 class RemovalOperator(ABC):
     """Base class for ALNS removal operators."""
 
     @abstractmethod
-    def remove(self, solution: Solution, k: int) -> List[Node]:
+    def remove(self, solution: Solution, k: int, rng: random.Random = None) -> List[Node]:
         """Remove k nodes from the solution and return the removed nodes."""
         pass
 
@@ -28,17 +29,28 @@ class InsertionOperator(ABC):
 class RandomRemoval(RemovalOperator):
     """Remove k random customer nodes for diversification."""
 
-    def remove(self, solution: Solution, k: int) -> List[Node]:
+    def remove(self, solution: Solution, k: int, rng: random.Random = None, lock_splits: bool = False) -> List[Node]:
         """Randomly remove k customer nodes from the solution."""
-        solution_nodes = [node for route in solution.routes for node in route.nodes if not node.is_depot]
-        if k > len(solution_nodes):
-            k = len(solution_nodes)
-        removed = random.sample(solution_nodes, k)
-        for node in removed:
-            for route in solution.routes:
-                if node in route.nodes:
-                    route.nodes.remove(node)
-                    break
+        _rng = rng or random
+        solution_nodes = [
+            node for route in solution.routes
+            for node in route.nodes if not node.is_depot and not (lock_splits and node.is_split)
+        ]
+        seen = set()
+        unique_nodes = []
+        for node in solution_nodes:
+            key = getattr(node, "original_id", node.id)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_nodes.append(node)
+
+        if k > len(unique_nodes):
+            k = len(unique_nodes)
+        selected = _rng.sample(unique_nodes, k)
+        removed = []
+        for node in selected:
+            removed.append(solution.remove_node_from_routes(node))
         return removed
 
 
@@ -46,40 +58,63 @@ class RandomRemoval(RemovalOperator):
 class SimilarityRemoval(RemovalOperator):
     """Remove k nodes based on relatedness/similarity measure."""
 
-    def remove(self, solution: Solution, k: int) -> List[Node]:
+    def remove(self, solution: Solution, k: int, rng: random.Random = None, lock_splits: bool = False) -> List[Node]:
         """Remove k nodes with highest similarity to a seed node."""
-        solution_nodes = [node for route in solution.routes for node in route.nodes if not node.is_depot]
-        if not solution_nodes:
+        _rng = rng or random
+        solution_nodes = [
+            node for route in solution.routes
+            for node in route.nodes if not node.is_depot and not (lock_splits and node.is_split)
+        ]
+        seen = set()
+        unique_nodes = []
+        for node in solution_nodes:
+            key = getattr(node, "original_id", node.id)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_nodes.append(node)
+        if not unique_nodes:
             return []
-        if k > len(solution_nodes):
-            k = len(solution_nodes)
+        if k > len(unique_nodes):
+            k = len(unique_nodes)
 
         removed: List[Node] = []
+        removed_keys = set()
 
         original_route_of: Dict[Node, int] = {}
         for idx, route in enumerate(solution.routes):
             for node in route.nodes:
                 if not node.is_depot:
-                    original_route_of[node] = idx
+                    key = getattr(node, "original_id", node.id)
+                    if key not in removed_keys and node not in original_route_of:
+                        original_route_of[node] = idx
+
+        def node_key(target: Node) -> int:
+            return getattr(target, "original_id", target.id)
 
         def remove_node(target: Node) -> None:
-            for route in solution.routes:
-                if target in route.nodes:
-                    route.nodes.remove(target)
-                    return
+            removed_node = solution.remove_node_from_routes(target)
+            removed.append(removed_node)
+            removed_keys.add(node_key(removed_node))
 
-        seed = random.choice(solution_nodes)
+        seed = _rng.choice(unique_nodes)
         seed_route_idx = original_route_of.get(seed)
-        removed.append(seed)
         remove_node(seed)
 
         while len(removed) < k:
-            remaining = [node for node in solution_nodes if node not in removed]
+            remaining = [
+                node for node in unique_nodes
+                if node_key(node) not in removed_keys
+            ]
             if not remaining:
                 break
 
-            seed = random.choice(removed)
-            seed_route_idx = original_route_of.get(seed)
+            seed = _rng.choice(removed)
+            seed_route_idx = None
+            for rep, route_idx in original_route_of.items():
+                if node_key(rep) == node_key(seed):
+                    seed_route_idx = route_idx
+                    break
 
             distances = {}
             dist_max = 0.0
@@ -89,8 +124,7 @@ class SimilarityRemoval(RemovalOperator):
                 if dist > dist_max:
                     dist_max = dist
             if dist_max == 0.0:
-                next_node = random.choice(remaining)
-                removed.append(next_node)
+                next_node = _rng.choice(remaining)
                 remove_node(next_node)
                 continue
 
@@ -99,13 +133,13 @@ class SimilarityRemoval(RemovalOperator):
                 dist = distances[node]
                 same_route = seed_route_idx is not None and seed_route_idx == original_route_of.get(node)
                 t_ij = 0 if same_route else 1
-                related = 1 / ((dist / dist_max) + t_ij)
+                denom = (dist / dist_max) + t_ij
+                related = 0.0 if denom <= 0.0 else 1 / denom
                 relatedness.append((related, node))
 
             relatedness.sort(key=lambda item: item[0], reverse=True)
-            index = int((random.random() ** 2) * len(relatedness))
+            index = int((_rng.random() ** 2) * len(relatedness))
             _, next_node = relatedness[index]
-            removed.append(next_node)
             remove_node(next_node)
 
         return removed
@@ -117,19 +151,28 @@ class SimilarityRemoval(RemovalOperator):
 class DeterministicWorstRemoval(RemovalOperator):
     """Remove nodes with highest deterministic cost contribution."""
 
-    def remove(self, solution: Solution, k: int) -> List[Node]:
+    def remove(self, solution: Solution, k: int, rng: random.Random = None, lock_splits: bool = False) -> List[Node]:
         """Remove k nodes that yield the largest travel cost savings."""
-        solution_nodes = [node for route in solution.routes for node in route.nodes if not node.is_depot]
+        solution_nodes = [
+            node for route in solution.routes
+            for node in route.nodes if not node.is_depot and not (lock_splits and node.is_split)
+        ]
         routes = solution.routes
-        if k > len(solution_nodes):
-            k = len(solution_nodes)
+        seen = set()
+        for node in solution_nodes:
+            seen.add(getattr(node, "original_id", node.id))
+        if k > len(seen):
+            k = len(seen)
         removed: List[Node] = []
+        removed_keys = set()
+
+        def node_key(target: Node) -> int:
+            return getattr(target, "original_id", target.id)
 
         def remove_node(target: Node) -> None:
-            for route in solution.routes:
-                if target in route.nodes:
-                    route.nodes.remove(target)
-                    return
+            removed_node = solution.remove_node_from_routes(target)
+            removed.append(removed_node)
+            removed_keys.add(node_key(removed_node))
 
         if len(routes) >= k:
             best_per_route = []
@@ -151,7 +194,8 @@ class DeterministicWorstRemoval(RemovalOperator):
 
             best_per_route.sort(key=lambda item: item[0], reverse=True)
             for _, node in best_per_route[:k]:
-                removed.append(node)
+                if node_key(node) in removed_keys:
+                    continue
                 remove_node(node)
         else:
             while len(removed) < k:
@@ -172,7 +216,8 @@ class DeterministicWorstRemoval(RemovalOperator):
                 if best is None:
                     break
                 _, node = best
-                removed.append(node)
+                if node_key(node) in removed_keys:
+                    break
                 remove_node(node)
 
         return removed
@@ -185,20 +230,31 @@ class RecourseWorstRemoval(RemovalOperator):
         self,
         solution: Solution,
         k: int,
-        precomputed_costs: Dict[Node, float],
+        precomputed_costs: Dict[Node, float] = None,
+        _rng: random.Random = None,
+        lock_splits: bool = False,
     ) -> List[Node]:
         """Remove k nodes using precomputed expected recourse costs."""
-        solution_nodes = [node for route in solution.routes for node in route.nodes if not node.is_depot]
-        if k > len(solution_nodes):
-            k = len(solution_nodes)
+        solution_nodes = [
+            node for route in solution.routes
+            for node in route.nodes if not node.is_depot and not (lock_splits and node.is_split)
+        ]
+        seen = set()
+        for node in solution_nodes:
+            seen.add(getattr(node, "original_id", node.id))
+        if k > len(seen):
+            k = len(seen)
 
         removed: List[Node] = []
+        removed_keys = set()
+
+        def node_key(target: Node) -> int:
+            return getattr(target, "original_id", target.id)
 
         def remove_node(target: Node) -> None:
-            for route in solution.routes:
-                if target in route.nodes:
-                    route.nodes.remove(target)
-                    return
+            removed_node = solution.remove_node_from_routes(target)
+            removed.append(removed_node)
+            removed_keys.add(node_key(removed_node))
 
         route_of: Dict[Node, Route] = {}
         for route in solution.routes:
@@ -207,7 +263,14 @@ class RecourseWorstRemoval(RemovalOperator):
                     route_of[node] = route
 
         per_route: Dict[Route, List[tuple]] = {}
+        best_by_key: Dict[int, tuple] = {}
         for node, cost in precomputed_costs.items():
+            key = node_key(node)
+            existing = best_by_key.get(key)
+            if existing is None or cost > existing[0]:
+                best_by_key[key] = (cost, node)
+
+        for _, node in best_by_key.values():
             route = route_of.get(node)
             if route is None:
                 continue
@@ -233,8 +296,7 @@ class RecourseWorstRemoval(RemovalOperator):
 
             best_per_route.sort(key=lambda item: item[0], reverse=True)
             for _, node in best_per_route[:k]:
-                if node not in removed:
-                    removed.append(node)
+                if node_key(node) not in removed_keys:
                     remove_node(node)
         else:
             all_candidates = []
@@ -244,8 +306,7 @@ class RecourseWorstRemoval(RemovalOperator):
             for _, node in all_candidates:
                 if len(removed) >= k:
                     break
-                if node not in removed:
-                    removed.append(node)
+                if node_key(node) not in removed_keys:
                     remove_node(node)
 
         return removed
@@ -257,6 +318,8 @@ class GreedyInsertion(InsertionOperator):
     def insert(self, solution: Solution, nodes: List[Node]) -> Solution:
         """Greedily insert nodes to minimize travel or total cost increase."""
         for node in nodes:
+            if solution.customer_present(getattr(node, "original_id", node.id)):
+                continue
             best_route = None
             best_pos = None
             best_increase = float("inf")
@@ -297,24 +360,36 @@ class SplitInsertion(InsertionOperator):
     def __init__(
         self,
         operator_calculator: 'CostCalculator' = None,
+        alpha_policy: str = "lei",
+        alpha_grid: Optional[List[float]] = None,
     ):
         self.operator_calculator = operator_calculator
+        self.alpha_policy = alpha_policy
+        self.alpha_grid = alpha_grid
 
     def insert(
         self,
         solution: Solution,
         nodes: List[Node],
-        alpha_map: Dict[int, tuple] = None,
-        samples: Optional[np.ndarray] = None,
+        samples: Optional[dict] = None,
     ) -> Solution:
         """Insert nodes, splitting demand if no single feasible position exists."""
-        if alpha_map is None:
-            alpha_map = {}
 
         def route_cost(route: Route) -> float:
             if self.operator_calculator is None:
                 return route.travel_cost()
-            return self.operator_calculator.total_expected_cost(route, samples=samples)
+            route_samples = None
+            if isinstance(samples, dict):
+                candidate = samples.get(route)
+                if candidate:
+                    expected_len = sum(1 for n in route.nodes if not n.is_depot)
+                    if all(len(sample) == expected_len for sample in candidate):
+                        route_samples = candidate
+            elif samples:
+                expected_len = sum(1 for n in route.nodes if not n.is_depot)
+                if all(len(sample) == expected_len for sample in samples):
+                    route_samples = samples
+            return self.operator_calculator.total_expected_cost(route, samples=route_samples)
 
         def paired_set() -> set:
             return set(solution.paired_routes.keys()) | set(solution.paired_routes.values())
@@ -343,6 +418,8 @@ class SplitInsertion(InsertionOperator):
             return solution._split_id_counter
 
         for node in nodes:
+            if solution.customer_present(getattr(node, "original_id", node.id)):
+                continue
             paired_routes_set = paired_set()
             unpaired_routes = [route for route in solution.routes if is_unpaired(route, paired_routes_set)]
 
@@ -351,34 +428,33 @@ class SplitInsertion(InsertionOperator):
             node1 = None
             node2 = None
             if len(unpaired_routes) >= 2:
-                alpha = alpha_map.get(node.id)
-                if alpha is not None:
-                    alpha1, alpha2 = alpha
-                    node1 = Node(
-                        next_split_id(),
-                        node.x,
-                        node.y,
-                        node.mean_demand,
-                        is_depot=False,
-                        is_split=True,
-                        alpha=alpha1,
-                    )
-                    node1.original_id = node.id
+                alpha1, alpha2 = compute_alpha(self.alpha_policy, unpaired_routes[0], unpaired_routes[1])
+                node1 = Node(
+                    next_split_id(),
+                    node.x,
+                    node.y,
+                    node.mean_demand,
+                    is_depot=False,
+                    is_split=True,
+                    alpha=alpha1,
+                )
+                node1.original_id = node.id
 
-                    node2 = Node(
-                        next_split_id(),
-                        node.x,
-                        node.y,
-                        node.mean_demand,
-                        is_depot=False,
-                        is_split=True,
-                        alpha=alpha2,
-                    )
-                    node2.original_id = node.id
+                node2 = Node(
+                    next_split_id(),
+                    node.x,
+                    node.y,
+                    node.mean_demand,
+                    is_depot=False,
+                    is_split=True,
+                    alpha=alpha2,
+                )
+                node2.original_id = node.id
 
             best_pair = None
             best_pair_cost = float("inf")
             best_positions = None
+            best_alphas = None
 
             if node1 is not None and node2 is not None:
                 for i in range(len(unpaired_routes)):
@@ -386,21 +462,38 @@ class SplitInsertion(InsertionOperator):
                         r1 = unpaired_routes[i]
                         r2 = unpaired_routes[j]
 
-                        inc1, pos1 = best_insertion(r1, node1)
-                        inc2, pos2 = best_insertion(r2, node2)
-
-                        if pos1 is None or pos2 is None:
+                        # Skip pairs where one route has no customers — Eq. 12 is undefined
+                        r1_customers = [n for n in r1.nodes if not n.is_depot]
+                        r2_customers = [n for n in r2.nodes if not n.is_depot]
+                        if not r1_customers or not r2_customers:
                             continue
 
-                        pair_cost = inc1 + inc2
-                        if pair_cost < best_pair_cost:
-                            best_pair_cost = pair_cost
-                            best_pair = (r1, r2, node1, node2)
-                            best_positions = (pos1, pos2)
+                        if self.alpha_grid:
+                            alphas_to_try = [(a, 1.0 - a) for a in self.alpha_grid]
+                        else:
+                            alphas_to_try = [compute_alpha(self.alpha_policy, r1, r2)]
+
+                        for alpha1, alpha2 in alphas_to_try:
+                            node1.alpha = alpha1
+                            node2.alpha = alpha2
+
+                            inc1, pos1 = best_insertion(r1, node1)
+                            inc2, pos2 = best_insertion(r2, node2)
+
+                            if pos1 is None or pos2 is None:
+                                continue
+
+                            pair_cost = inc1 + inc2
+                            if pair_cost < best_pair_cost:
+                                best_pair_cost = pair_cost
+                                best_pair = (r1, r2)
+                                best_positions = (pos1, pos2)
+                                best_alphas = (alpha1, alpha2)
 
                 if best_pair is not None:
-                    r1, r2, node1, node2 = best_pair
+                    r1, r2 = best_pair
                     pos1, pos2 = best_positions
+                    node1.alpha, node2.alpha = best_alphas
                     r1.nodes.insert(pos1, node1)
                     r2.nodes.insert(pos2, node2)
                     solution.paired_routes[r1] = r2
@@ -467,7 +560,7 @@ class RegretInsertion(InsertionOperator):
                     best_pos = pos
             return best_increase, best_pos
 
-        uninserted = list(nodes)
+        uninserted = [n for n in nodes if not solution.customer_present(getattr(n, "original_id", n.id))]
 
         while uninserted:
             infeasible_nodes = []
@@ -516,8 +609,97 @@ class RegretInsertion(InsertionOperator):
 
         return solution
 
+class GreedyInsertionEC(InsertionOperator):
+    """Greedy insertion using expected cost (recourse-aware) instead of travel cost."""
+
+    def __init__(self, operator_calculator: 'CostCalculator'):
+        self.operator_calculator = operator_calculator
+
+    def insert(self, solution: Solution, nodes: List[Node]) -> Solution:
+        for node in nodes:
+            if solution.customer_present(getattr(node, "original_id", node.id)):
+                continue
+            best_route, best_pos, best_increase = None, None, float("inf")
+            for route in solution.routes:
+                base = self.operator_calculator.total_expected_cost(route)
+                for pos in range(1, len(route.nodes)):
+                    tmp = route.nodes.copy()
+                    tmp.insert(pos, node)
+                    t = Route(tmp, route.instance)
+                    if not t.is_feasible():
+                        continue
+                    inc = self.operator_calculator.total_expected_cost(t) - base
+                    if inc < best_increase:
+                        best_increase, best_route, best_pos = inc, route, pos
+            if best_route is not None:
+                best_route.nodes.insert(best_pos, node)
+            else:
+                depot = solution.routes[0].nodes[0]
+                solution.routes.append(Route([depot, node, depot], solution.routes[0].instance))
+        return solution
+
+
+class RegretInsertionEC(InsertionOperator):
+    """Regret insertion using expected cost (recourse-aware) instead of travel cost."""
+
+    def __init__(self, operator_calculator: 'CostCalculator'):
+        self.operator_calculator = operator_calculator
+
+    def insert(self, solution: Solution, nodes: List[Node]) -> Solution:
+        def route_cost(r):
+            return self.operator_calculator.total_expected_cost(r)
+
+        def best_in_route(route, node):
+            base = route_cost(route)
+            best_pos, best_inc = None, float("inf")
+            for pos in range(1, len(route.nodes)):
+                tmp = route.nodes.copy()
+                tmp.insert(pos, node)
+                t = Route(tmp, route.instance)
+                if not t.is_feasible():
+                    continue
+                inc = route_cost(t) - base
+                if inc < best_inc:
+                    best_inc, best_pos = inc, pos
+            return best_inc, best_pos
+
+        uninserted = [n for n in nodes if not solution.customer_present(getattr(n, "original_id", n.id))]
+        while uninserted:
+            infeasible, regret_scores = [], []
+            for node in uninserted:
+                costs = []
+                for route in solution.routes:
+                    inc, pos = best_in_route(route, node)
+                    if pos is not None:
+                        costs.append((inc, route, pos))
+                if not costs:
+                    infeasible.append(node)
+                    continue
+                costs.sort(key=lambda x: x[0])
+                best_inc, best_route, best_pos = costs[0]
+                z = len(costs) - 1
+                regret = 0.0 if z == 0 else sum(c[0] - best_inc for c in costs[1:]) / z
+                regret_scores.append((regret, node, best_route, best_pos))
+            if infeasible and not regret_scores:
+                node = infeasible[0]
+                uninserted.remove(node)
+                depot = solution.routes[0].nodes[0]
+                solution.routes.append(Route([depot, node, depot], solution.routes[0].instance))
+                continue
+            if not regret_scores:
+                break
+            regret_scores.sort(key=lambda x: x[0], reverse=True)
+            _, best_node, best_route, best_pos = regret_scores[0]
+            best_route.nodes.insert(best_pos, best_node)
+            uninserted.remove(best_node)
+        return solution
+
+
 class DemandFailureSortingInsertion(InsertionOperator):
     """Insert nodes sorted by demand and route failure probability."""
+
+    def __init__(self, operator_calculator: 'CostCalculator' = None):
+        self.operator_calculator = operator_calculator
 
     def insert(
         self,
@@ -526,9 +708,14 @@ class DemandFailureSortingInsertion(InsertionOperator):
     ) -> Solution:
         """Sort nodes by expected demand and insert into routes by failure risk."""
 
+        def route_cost(route: Route) -> float:
+            if self.operator_calculator is None:
+                return route.travel_cost()
+            return self.operator_calculator.total_expected_cost(route)
+
         def best_insertion_in_route(route: Route, node: Node):
             """Returns (best_increase, best_pos) for inserting node into route."""
-            base_cost = route.travel_cost()
+            base_cost = route_cost(route)
             best_pos = None
             best_increase = float("inf")
             for pos in range(1, len(route.nodes)):
@@ -537,7 +724,7 @@ class DemandFailureSortingInsertion(InsertionOperator):
                 temp_route = Route(temp_nodes, route.instance)
                 if not temp_route.is_feasible():
                     continue
-                increase = temp_route.travel_cost() - base_cost
+                increase = route_cost(temp_route) - base_cost
                 if increase < best_increase:
                     best_increase = increase
                     best_pos = pos
@@ -546,7 +733,10 @@ class DemandFailureSortingInsertion(InsertionOperator):
         def route_failure_probability(route: Route) -> float:
             return sum(route.failure_probabilities())
 
-        uninserted = sorted(nodes, key=lambda n: n.mean_demand, reverse=True)
+        uninserted = sorted(
+            [n for n in nodes if not solution.customer_present(getattr(n, "original_id", n.id))],
+            key=lambda n: n.mean_demand, reverse=True,
+        )
 
         for node in uninserted:
             sorted_routes = sorted(solution.routes, key=route_failure_probability)

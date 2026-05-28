@@ -15,16 +15,20 @@ class CostCalculator(ABC):
 
     @abstractmethod
     def compute_recourse_cost(
-        self, route: Route, samples: Optional[np.ndarray] = None
+        self, route: Route, samples: Optional[np.ndarray] = None,
+        paired_route: Optional[Route] = None,
     ) -> float:
         """Compute expected recourse cost E[ψ(r_k)] for a single route."""
         pass
 
     def total_expected_cost(
-        self, route: Route, samples: Optional[np.ndarray] = None
+        self, route: Route, samples: Optional[np.ndarray] = None,
+        paired_route: Optional[Route] = None,
     ) -> float:
         """Return φ(r_k) + E[ψ(r_k)] (Equation 1)."""
-        return route.travel_cost() + self.compute_recourse_cost(route, samples=samples)
+        return route.travel_cost() + self.compute_recourse_cost(
+            route, samples=samples, paired_route=paired_route
+        )
 
 
 class ExactCostCalculator(CostCalculator):
@@ -37,7 +41,8 @@ class ExactCostCalculator(CostCalculator):
         self.recourse_policy = recourse_policy
 
     def compute_recourse_cost(
-        self, route: Route, samples: Optional[np.ndarray] = None
+        self, route: Route, samples: Optional[np.ndarray] = None,
+        paired_route: Optional[Route] = None,
     ) -> float:
         """
         Compute exact expected recourse cost using Poisson distributions.
@@ -89,10 +94,12 @@ class MonteCarloCostCalculator(CostCalculator):
         )
 
     def compute_recourse_cost(
-        self, route: Route, samples: Optional[np.ndarray] = None
+        self, route: Route, samples: Optional[np.ndarray] = None,
+        paired_route: Optional[Route] = None,
     ) -> float:
         sample_costs = self.strategy.sample(
-            route, num_samples=self.num_samples, samples=samples
+            route, num_samples=self.num_samples, samples=samples,
+            paired_route=paired_route,
         )
         sample_mean = np.mean(sample_costs)
         return float(sample_mean)

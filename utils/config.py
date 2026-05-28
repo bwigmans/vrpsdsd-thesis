@@ -1,10 +1,6 @@
 
 from dataclasses import dataclass, field
-
-from typing import List, Dict, Optional, Literal
-
-
-
+from typing import Dict, List, Optional, Literal
 @dataclass
 class Configuration:
     """Main configuration container for VRPSDSD solver."""
@@ -14,38 +10,51 @@ class Configuration:
     distance_metric: str = "euclidean"
     
     # Cost computation
-    cost_method: Literal["exact", "sampling"] = "exact"
+    cost_method: Literal["exact", "sampling"] = "sampling"
     recourse_policy: str = "paired_vehicle"
-    
-    # Sampling configuration
-    sampling_num_samples: int = 1000
-    sampling_random_seed: Optional[int] = None
-    sampling_parallel: bool = False
-    sampling_num_threads: Optional[int] = None
-    sampling_variance_reduction: List[str] = field(default_factory=list)
+
+    # Sampling configuration — only used when cost_method == "sampling"
+    operator_num_samples: int = 50
+    evaluation_num_samples: int = 500
+
+    # Random seed
+    seed: Optional[int] = None
     
     # ALNS parameters
     alns_iterations: int = 1000
-    alns_segment_length: int = 100
-    alns_start_temperature: float = 100.0
-    alns_cooling_rate: float = 0.9995
+    alns_segment_length: int = 50
+
+    # RRT acceptance criterion
+    rrt_deviation_factor: float = 0.01
     
     # Operator parameters
     removal_min: int = 1
     removal_max: int = 10
-    insertion_min: int = 1
-    insertion_max: int = 10
-    
     # Weight adaptation
-    weight_update_decay: float = 0.8
-    reaction_factor: float = 0.3
+    weight_update_decay: float = 0.1
     score_increment: Dict[str, float] = field(default_factory=lambda: {
-        "new_best": 10.0,
-        "improving": 5.0,
-        "accepted": 2.0,
-        "rejected": 1.0
+        "new_best": 30.0,
+        "improving": 10.0,
+        "accepted": 6.0,
     })
     
+    # Path to precomputed demand sample bank (.npz)
+    sample_bank_path: Optional[str] = None
+
+    # EC insertion operators (GreedyInsertionEC + RegretInsertionEC)
+    use_ec_operators: bool = False
+
+    # Post-processing: find best split after ALNS loop completes
+    find_split_post: bool = False
+
+    # Alpha policy for SplitInsertion
+    alpha_policy: str = "lei"
+    alpha_grid: Optional[List[float]] = None
+    alpha_reoptimize: bool = False
+
+    # Post-processing restart: lock split nodes from removal
+    lock_splits: bool = False
+
     # Output and logging
     verbose: bool = True
     log_frequency: int = 100

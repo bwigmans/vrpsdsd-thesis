@@ -1,7 +1,6 @@
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from networkx import nodes
 import numpy as np
 from core.instance import ProblemInstance, Node 
 from core.solution import Solution, Route
@@ -11,7 +10,6 @@ from cost.sampling import SamplingCostCalculator
 from cost.sampling_strategy import MonteCarloStrategy
 from core.recourse import RecoursePolicy, PairedVehicleRecourse 
 from io_thesis.instance_reader import read_solomon_instance
-from io_thesis.vizualtion import SolutionVisualizer
 class InitialSolutionBuilder:
     def __init__(self, instance: ProblemInstance):
         """Initialize solution builder."""
@@ -60,34 +58,128 @@ class InitialSolutionBuilder:
         return False
 
     def _try_split_insertion(self, solution: Solution, node: Node) -> bool:
-        """Allow split delivery if no single route can accommodate demand."""
+        """
+        Lei et al. (2012) Section 4.2 construction split insertion — paper-faithful.
+
+        Finds the FIRST unpaired route r1 where the largest feasible fraction fits,
+        then looks for any second unpaired route r2 for the remainder.
+        If no r2 exists → return False so build() opens a new unsplit route (paper §4.2).
+
+        The previous implementation (commented out below) searched ALL r1 candidates
+        and also created a new paired route when no r2 was found.  That produced
+        fewer, denser routes (~12) because it was more aggressive with splits.
+        """
         if len(solution.routes) < 2:
             return False
-        route_loads = [r.expected_load() for r in solution.routes]
-        for i in range(len(solution.routes)):
-            for j in range(i+1, len(solution.routes)):
-                r1 = solution.routes[i]
-                r2 = solution.routes[j]
-                total_load = route_loads[i] + route_loads[j]
-                if total_load == 0:
-                    alpha1 = 0.5
-                else:
-                    alpha1 = route_loads[j] / total_load
-                alpha2 = 1.0 - alpha1
-                if alpha1 <= 0 or alpha1 >= 1:
+
+        unpaired_routes = [
+            r for r in solution.routes
+            if r not in solution.paired_routes and r not in solution.paired_routes.values()
+        ]
+        if not unpaired_routes:
+            return False
+
+        # Step 1: find the FIRST unpaired route r1 where any fraction fits.
+        for r1 in unpaired_routes:
+            best_pos = None
+            best_frac = None
+            # Largest feasible fraction (paper: initial value 0.1, increment 0.1 → largest wins)
+            for frac in [i / 10 for i in range(9, 0, -1)]:
+                node_part = Node(
+                    node.id, node.x, node.y, node.mean_demand,
+                    is_depot=False, is_split=True, alpha=frac,
+                )
+                pos = self._best_insertion_position(r1, node_part)
+                if pos is not None:
+                    best_pos = pos
+                    best_frac = frac
+                    break
+
+            if best_pos is None:
+                continue  # this route can't take any fraction; try next
+
+            # Step 2: search for ANY second unpaired route r2 for the remainder.
+            remainder = 1.0 - best_frac
+            for r2 in unpaired_routes:
+                if r2 is r1:
                     continue
-                node1 = Node(node.id, node.x, node.y, node.mean_demand,
-                             is_depot=False, is_split=True, alpha=alpha1)
-                node2 = Node(node.id, node.x, node.y, node.mean_demand,
-                             is_depot=False, is_split=True, alpha=alpha2)
-                if (self._can_insert_split(r1, node1) and
-                    self._can_insert_split(r2, node2)):
-                    pos1 = self._best_insertion_position(r1, node1)
-                    r1.nodes.insert(pos1, node1)
-                    pos2 = self._best_insertion_position(r2, node2)
-                    r2.nodes.insert(pos2, node2)
-                    return True
+                node_rest = Node(
+                    node.id, node.x, node.y, node.mean_demand,
+                    is_depot=False, is_split=True, alpha=remainder,
+                )
+                pos2 = self._best_insertion_position(r2, node_rest)
+                if pos2 is None:
+                    continue
+                # Both routes found — do the paired split insertion.
+                node_part = Node(
+                    node.id, node.x, node.y, node.mean_demand,
+                    is_depot=False, is_split=True, alpha=best_frac,
+                )
+                r1.nodes.insert(best_pos, node_part)
+                r2.nodes.insert(pos2, node_rest)
+                solution.paired_routes[r1] = r2
+                solution.paired_routes[r2] = r1
+                return True
+
+            # r1 found but no r2 — paper §4.2: "a new route is created and the current
+            # vertex is inserted into the new route without split."  Return False so
+            # build() opens a fresh unsplit route; do NOT modify r1.
+            return False
+
         return False
+
+    # ---------------------------------------------------------------------------
+    # Previous _try_split_insertion (commented out — produced ~12 routes by
+    # searching all r1 candidates and creating a paired route when no r2 existed;
+    # outperformed paper's 16-route construction on cost but diverged from §4.2).
+    # ---------------------------------------------------------------------------
+    # def _try_split_insertion_aggressive(self, solution, node):
+    #     if len(solution.routes) < 2:
+    #         return False
+    #     unpaired_routes = [r for r in solution.routes
+    #                        if r not in solution.paired_routes
+    #                        and r not in solution.paired_routes.values()]
+    #     if not unpaired_routes:
+    #         return False
+    #     for route in unpaired_routes:
+    #         best_pos = None; best_frac = None
+    #         for frac in [i/10 for i in range(9, 0, -1)]:
+    #             node_part = Node(node.id, node.x, node.y, node.mean_demand,
+    #                              is_depot=False, is_split=True, alpha=frac)
+    #             pos = self._best_insertion_position(route, node_part)
+    #             if pos is not None:
+    #                 best_pos = pos; best_frac = frac; break
+    #         if best_pos is None or best_frac is None:
+    #             continue
+    #         remainder = 1.0 - best_frac
+    #         for route2 in unpaired_routes:
+    #             if route2 is route:
+    #                 continue
+    #             node_rest = Node(node.id, node.x, node.y, node.mean_demand,
+    #                              is_depot=False, is_split=True, alpha=remainder)
+    #             pos2 = self._best_insertion_position(route2, node_rest)
+    #             if pos2 is None:
+    #                 continue
+    #             node_part = Node(node.id, node.x, node.y, node.mean_demand,
+    #                              is_depot=False, is_split=True, alpha=best_frac)
+    #             route.nodes.insert(best_pos, node_part)
+    #             route2.nodes.insert(pos2, node_rest)
+    #             solution.paired_routes[route] = route2
+    #             solution.paired_routes[route2] = route
+    #             return True
+    #         # No existing r2 — create new paired route for remainder (deviates from paper)
+    #         node_part = Node(node.id, node.x, node.y, node.mean_demand,
+    #                          is_depot=False, is_split=True, alpha=best_frac)
+    #         node_rest = Node(node.id, node.x, node.y, node.mean_demand,
+    #                          is_depot=False, is_split=True, alpha=remainder)
+    #         new_route = Route([self.depot, node_rest, self.depot], self.instance)
+    #         if new_route.is_feasible():
+    #             route.nodes.insert(best_pos, node_part)
+    #             solution.routes.append(new_route)
+    #             solution.paired_routes[route] = new_route
+    #             solution.paired_routes[new_route] = route
+    #             return True
+    #     return False
 
     def _can_insert_split(self, route: Route, node: Node) -> bool:
         return self._best_insertion_position(route, node) is not None
@@ -105,8 +197,42 @@ class InitialSolutionBuilder:
                     best_increase = increase
                     best_pos = pos
         return best_pos
+
+
+    # NOTE: Previous heuristic (Lei-style alpha using route loads) kept for reference.
+    #
+    # def _try_split_insertion(self, solution: Solution, node: Node) -> bool:
+    #     """Allow split delivery if no single route can accommodate demand."""
+    #     if len(solution.routes) < 2:
+    #         return False
+    #     route_loads = [r.expected_load() for r in solution.routes]
+    #     for i in range(len(solution.routes)):
+    #         for j in range(i+1, len(solution.routes)):
+    #             r1 = solution.routes[i]
+    #             r2 = solution.routes[j]
+    #             total_load = route_loads[i] + route_loads[j]
+    #             if total_load == 0:
+    #                 alpha1 = 0.5
+    #             else:
+    #                 alpha1 = route_loads[j] / total_load
+    #             alpha2 = 1.0 - alpha1
+    #             if alpha1 <= 0 or alpha1 >= 1:
+    #                 continue
+    #             node1 = Node(node.id, node.x, node.y, node.mean_demand,
+    #                          is_depot=False, is_split=True, alpha=alpha1)
+    #             node2 = Node(node.id, node.x, node.y, node.mean_demand,
+    #                          is_depot=False, is_split=True, alpha=alpha2)
+    #             if (self._can_insert_split(r1, node1) and
+    #                 self._can_insert_split(r2, node2)):
+    #                 pos1 = self._best_insertion_position(r1, node1)
+    #                 r1.nodes.insert(pos1, node1)
+    #                 pos2 = self._best_insertion_position(r2, node2)
+    #                 r2.nodes.insert(pos2, node2)
+    #                 return True
+    #     return False
     
 if __name__ == "__main__":
+    from io_thesis.vizualtion import SolutionVisualizer
   
     instance = read_solomon_instance('data/C102.txt', vehicle_capacity=70.0)
    

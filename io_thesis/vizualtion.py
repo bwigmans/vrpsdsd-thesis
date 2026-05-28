@@ -10,8 +10,17 @@ class SolutionVisualizer:
         self.solution = solution
         self.instance = instance or solution.routes[0].instance
 
-    def plot(self, show_labels: bool = True, show_route_numbers: bool = True,
-             figsize=(10, 8), save_path: str = None):
+    def plot(
+        self,
+        show_labels: bool = True,
+        show_route_numbers: bool = True,
+        show_capacity: bool = False,
+        capacity_mode: str = "planned",
+        capacity_seed: int = 42,
+        show_only_split_routes: bool = False,
+        figsize=(10, 8),
+        save_path: str = None,
+    ):
         """Plot all routes with different colors."""
         plt.figure(figsize=figsize)
 
@@ -19,21 +28,64 @@ class SolutionVisualizer:
         depot = self.instance.nodes[0]
         plt.scatter(depot.x, depot.y, c='red', s=150, marker='s', label='Depot', zorder=5)
 
-        # Plot customers
+        # Plot customers (base instance)
         customers = [n for n in self.instance.nodes if not n.is_depot]
         for cust in customers:
             color = 'blue' if not cust.is_split else 'orange'
             plt.scatter(cust.x, cust.y, c=color, s=50, alpha=0.8)
             if show_labels:
-                plt.annotate(str(cust.id), (cust.x, cust.y), fontsize=8, ha='center', va='bottom')
+                plt.annotate(
+                    str(cust.id),
+                    (cust.x, cust.y),
+                    fontsize=8,
+                    ha='center',
+                    va='bottom',
+                )
+
+        # Overlay split nodes from the solution (may not exist in instance list)
+        split_nodes = [n for r in self.solution.routes for n in r.nodes if n.is_split]
+        if split_nodes:
+            plt.scatter(
+                [n.x for n in split_nodes],
+                [n.y for n in split_nodes],
+                c='orange',
+                s=90,
+                marker='^',
+                edgecolors='black',
+                linewidths=0.6,
+                label='Split nodes',
+                zorder=6,
+            )
+            if show_labels:
+                for node in split_nodes:
+                    label = f"{node.id} (a={node.alpha:.2f})"
+                    plt.annotate(label, (node.x, node.y), fontsize=8, ha='center', va='bottom')
 
         # Plot routes
         colors = plt.cm.tab10(np.linspace(0, 1, len(self.solution.routes)))
+        split_routes = {
+            idx for idx, route in enumerate(self.solution.routes)
+            if any(node.is_split for node in route.nodes)
+        }
         for idx, route in enumerate(self.solution.routes):
+            is_split_route = idx in split_routes
+            if show_only_split_routes and not is_split_route:
+                continue
             xs = [n.x for n in route.nodes]
             ys = [n.y for n in route.nodes]
-            plt.plot(xs, ys, color=colors[idx], linewidth=2, marker='o', markersize=6,
-                     label=f'Route {idx+1}' if show_route_numbers else '_nolegend_')
+            plt.plot(
+                xs,
+                ys,
+                color=colors[idx],
+                linewidth=3 if is_split_route else 2,
+                marker='o',
+                markersize=7 if is_split_route else 6,
+                label=(
+                    f'Route {idx+1} (split)'
+                    if show_route_numbers and is_split_route
+                    else (f'Route {idx+1}' if show_route_numbers else '_nolegend_')
+                ),
+            )
             # Mark start of route
             if route.nodes[0].is_depot and len(route.nodes) > 1:
                 first_cust = route.nodes[1]
@@ -41,12 +93,47 @@ class SolutionVisualizer:
                              fontsize=9, fontweight='bold', xytext=(5, 5),
                              textcoords='offset points', color=colors[idx])
 
-        plt.xlabel('X coordinate')
-        plt.ylabel('Y coordinate')
-        plt.title('VRPSDSD Solution Visualization')
+            if show_capacity:
+                remaining = self.instance.vehicle_capacity
+                rng = np.random.default_rng(capacity_seed + idx)
+                for node in route.nodes[1:]:
+                    if node.is_depot:
+                        continue
+                    label_parts = [f"{remaining:.1f}"]
+                    if node.is_split:
+                        label_parts.append(f"a={node.alpha:.2f}")
+                    label = " ".join(label_parts)
+                    plt.annotate(
+                        label,
+                        (node.x, node.y),
+                        fontsize=7,
+                        ha='center',
+                        va='top',
+                        xytext=(0, -6),
+                        textcoords='offset points',
+                        color=colors[idx],
+                    )
+
+                    if capacity_mode == "simulated":
+                        dist = self.instance.get_demand_distribution(node)
+                        demand_total = float(dist.rvs(random_state=rng))
+                        planned = demand_total * node.alpha if node.is_split else demand_total
+                        if planned > remaining + 1e-9:
+                            leftover = planned - remaining
+                            remaining = max(0.0, self.instance.vehicle_capacity - leftover)
+                        elif abs(planned - remaining) < 1e-9:
+                            remaining = self.instance.vehicle_capacity
+                        else:
+                            remaining -= planned
+                    else:
+                        planned = route._planned_demand(node)
+                        remaining = max(0.0, remaining - planned)
+
         plt.legend(loc='best', fontsize=8)
-        plt.grid(True, alpha=0.3)
         plt.axis('equal')
+        plt.xticks([])
+        plt.yticks([])
+        plt.box(False)
 
         if save_path:
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
