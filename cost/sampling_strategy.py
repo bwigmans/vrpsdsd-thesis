@@ -2,10 +2,9 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
-from scipy.stats import poisson
 
 from core.route import Route
-from core.recourse import RecoursePolicy, PairedVehicleRecourse
+from core.recourse import RecoursePolicy
 
 
 class SamplingStrategy(ABC):
@@ -35,40 +34,69 @@ class MonteCarloStrategy(SamplingStrategy):
         self.parallel = parallel
         self.num_threads = num_threads or 4
         self.rng = np.random.default_rng(self.seed)
+        # Precomputed demand samples: {customer_id: np.array(num_samples,)}
+        self._precomputed: Optional[dict] = None
 
     def sample(
         self,
         route: Route,
         num_samples: Optional[int] = None,
         samples: Optional[np.ndarray] = None,
+        paired_route: Optional[Route] = None,
     ) -> List[float]:
         """Perform Monte Carlo sampling of recourse costs."""
         if samples is not None:
             costs = []
             for demands in samples:
-                costs.append(self.recourse_policy.compute_cost(route, list(demands)))
+                costs.append(self.recourse_policy.compute_cost(
+                    route, list(demands), paired_route=paired_route
+                ))
             return costs
 
         ns = num_samples or self.num_samples
         if self.parallel:
-            return self._parallel_sample(route, ns)
+            return self._parallel_sample(route, ns, paired_route=paired_route)
         else:
-            return self._sequential_sample(route, ns)
+            return self._sequential_sample(route, ns, paired_route=paired_route)
 
-    def _sequential_sample(self, route: Route, num_samples: int) -> List[float]:
-        """Sequential sampling (single thread)."""
+    def set_samples(self, sample_slice: dict) -> None:
+        """
+        Provide a precomputed slice {customer_id: np.array(N,)} from DemandSampleBank.
+        After calling this, num_samples is updated to match the slice length.
+        """
+        self._precomputed = sample_slice
+        first = next(iter(sample_slice.values()))
+        self.num_samples = len(first)
+
+    def _sequential_sample(
+        self, route: Route, num_samples: int, paired_route: Optional[Route] = None
+    ) -> List[float]:
+        """Sequential sampling, using precomputed slice when available."""
+        customers = [n for n in route.nodes if not n.is_depot]
         costs = []
-        rng = self.rng
-        for _ in range(num_samples):
-            demands = self._generate_demands(route, rng)
-            cost = self.recourse_policy.compute_cost(route, demands)
-            costs.append(cost)
+
+        if self._precomputed is not None:
+            for i in range(num_samples):
+                demands = []
+                for node in customers:
+                    cid = getattr(node, "original_id", node.id)
+                    d = float(self._precomputed[cid][i])
+                    if node.is_split:
+                        d *= node.alpha
+                    demands.append(d)
+                costs.append(self.recourse_policy.compute_cost(route, demands, paired_route=paired_route))
+        else:
+            rng = self.rng
+            for _ in range(num_samples):
+                demands = self._generate_demands(route, rng)
+                costs.append(self.recourse_policy.compute_cost(route, demands, paired_route=paired_route))
         return costs
 
-    def _parallel_sample(self, route: Route, num_samples: int) -> List[float]:
+    def _parallel_sample(
+        self, route: Route, num_samples: int, paired_route: Optional[Route] = None
+    ) -> List[float]:
         """Parallelized sampling using ThreadPoolExecutor."""
         costs = []
-        # Split samples among threads
         samples_per_thread = num_samples // self.num_threads
         remainder = num_samples % self.num_threads
 
@@ -76,37 +104,42 @@ class MonteCarloStrategy(SamplingStrategy):
             futures = []
             for t in range(self.num_threads):
                 n = samples_per_thread + (1 if t < remainder else 0)
-                # Different seed per thread to avoid collisions
                 thread_seed = (self.seed + t) if self.seed is not None else None
                 futures.append(executor.submit(
-                    self._sample_chunk, route, n, thread_seed
+                    self._sample_chunk, route, n, thread_seed, paired_route
                 ))
 
             for future in as_completed(futures):
                 costs.extend(future.result())
         return costs
 
-    def _sample_chunk(self, route: Route, num_samples: int, seed: Optional[int]) -> List[float]:
+    def _sample_chunk(
+        self, route: Route, num_samples: int, seed: Optional[int],
+        paired_route: Optional[Route] = None,
+    ) -> List[float]:
         """Generate a chunk of samples in a single thread."""
         costs = []
         rng = np.random.default_rng(seed)
         for _ in range(num_samples):
             demands = self._generate_demands(route, rng)
-            cost = self.recourse_policy.compute_cost(route, demands)
+            cost = self.recourse_policy.compute_cost(route, demands, paired_route=paired_route)
             costs.append(cost)
         return costs
 
     def _generate_demands(self, route: Route, rng: np.random.Generator) -> List[float]:
         """
         Generate one demand realization for all customers on the route.
-        Returns list of total demands (not split‑fraction) in customer order.
+        Returns list of demands (scaled by alpha for split nodes) in customer order.
+        Works for any scipy demand distribution stored on the node.
         """
         customers = [n for n in route.nodes if not n.is_depot]
         demands = []
         for node in customers:
             dist = route.instance.get_demand_distribution(node)
-            demand = dist.rvs(random_state=rng)
-            demands.append(float(demand))
+            demand = float(dist.rvs(random_state=rng))
+            if node.is_split:
+                demand = demand * node.alpha
+            demands.append(demand)
         return demands
 
     def generate_demands(
