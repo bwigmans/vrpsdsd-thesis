@@ -1,6 +1,17 @@
 from typing import List, Optional
 import numpy as np
-from scipy.stats import poisson
+from scipy.stats import poisson, nbinom
+
+
+def nb_frozen(mean: float, dispersion: float):
+    """
+    Return a frozen NB(n, p) distribution with given mean and dispersion.
+    Parameterisation: var = mean + mean^2 / dispersion  (dispersion = r = size).
+    n = dispersion, p = dispersion / (dispersion + mean).
+    """
+    n = dispersion
+    p = dispersion / (dispersion + mean)
+    return nbinom(n, p)
 
 
 class Node:

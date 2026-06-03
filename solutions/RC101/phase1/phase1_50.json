@@ -1,0 +1,72 @@
+{
+  "seed": 50,
+  "base_cost": 1386.6343217153267,
+  "exact": {
+    "customer": 19,
+    "r1": 4,
+    "r2": 3,
+    "score": -5.909278
+  },
+  "oracle": {
+    "customer": 24,
+    "r1": 4,
+    "r2": 3,
+    "score": -40.328674
+  },
+  "table": [
+    {
+      "customer": 24,
+      "r1": 4,
+      "r2": 3,
+      "oracle": -40.3287,
+      "best_fixed": -0.0602,
+      "premium": -40.2685,
+      "best_exact": -3.9297
+    },
+    {
+      "customer": 19,
+      "r1": 4,
+      "r2": 3,
+      "oracle": -38.8341,
+      "best_fixed": 1.8542,
+      "premium": -40.6883,
+      "best_exact": -5.9093
+    },
+    {
+      "customer": 22,
+      "r1": 7,
+      "r2": 4,
+      "oracle": -18.2224,
+      "best_fixed": -1.0347,
+      "premium": -17.1877,
+      "best_exact": 1.6047
+    },
+    {
+      "customer": 20,
+      "r1": 7,
+      "r2": 4,
+      "oracle": -6.6698,
+      "best_fixed": -0.8176,
+      "premium": -5.8522,
+      "best_exact": 2.2902
+    },
+    {
+      "customer": 12,
+      "r1": 5,
+      "r2": 2,
+      "oracle": -6.2563,
+      "best_fixed": -1.0553,
+      "premium": -5.201,
+      "best_exact": 0.23
+    },
+    {
+      "customer": 14,
+      "r1": 5,
+      "r2": 2,
+      "oracle": -5.7947,
+      "best_fixed": -1.0876,
+      "premium": -4.707,
+      "best_exact": 0.0441
+    }
+  ]
+}

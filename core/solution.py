@@ -2,6 +2,8 @@
 from copy import deepcopy
 from typing import Dict, List
 
+import numpy as np
+
 from core.route import Route
 from core.instance import Node
 from cost.calculator import CostCalculator, ExactCostCalculator
@@ -36,6 +38,46 @@ class Solution:
     def get_total_cost(self, cost_calculator: 'CostCalculator') -> float:
         """Compute total cost (travel + recourse)."""
         return self.total_travel_cost() + self.total_recourse_cost(cost_calculator)
+
+    def get_total_cost_adaptive(self, rec, samples: dict) -> float:
+        """
+        Coordinated evaluation for AdaptivePairedVehicleRecourse.
+        Paired routes are evaluated together via compute_split_pair_costs so
+        r1 decides alpha and r2 receives the complement.
+        Unpaired routes fall back to independent compute_cost per sample.
+        """
+        recourse = 0.0
+        visited = set()
+        N = len(next(iter(samples.values())))
+
+        for route in self.routes:
+            partner = self.paired_routes.get(route)
+            if partner is not None:
+                pair_key = (min(id(route), id(partner)), max(id(route), id(partner)))
+                if pair_key in visited:
+                    continue
+                visited.add(pair_key)
+
+                split_nodes = [n for n in route.nodes if n.is_split] or \
+                              [n for n in partner.nodes if n.is_split]
+                original_id = getattr(split_nodes[0], 'original_id', split_nodes[0].id) if split_nodes else -1
+
+                r1_custs = [n for n in route.nodes if not n.is_depot]
+                r2_custs = [n for n in partner.nodes if not n.is_depot]
+                demands_r1 = [[float(samples[getattr(n, 'original_id', n.id)][i]) for n in r1_custs] for i in range(N)]
+                demands_r2 = [[float(samples[getattr(n, 'original_id', n.id)][i]) for n in r2_custs] for i in range(N)]
+
+                c1, c2 = rec.compute_split_pair_costs(route, partner, demands_r1, demands_r2, original_id)
+                recourse += float(np.mean(c1)) + float(np.mean(c2))
+            else:
+                custs = [n for n in route.nodes if not n.is_depot]
+                costs = []
+                for i in range(N):
+                    demands = [float(samples[getattr(n, 'original_id', n.id)][i]) for n in custs]
+                    costs.append(rec._compute_cost_single(route, demands))
+                recourse += float(np.mean(costs))
+
+        return self.total_travel_cost() + recourse
     
     def copy(self) -> 'Solution':
         """Create a deep copy of the solution."""

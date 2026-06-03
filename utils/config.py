@@ -14,7 +14,7 @@ class Configuration:
     recourse_policy: str = "paired_vehicle"
 
     # Sampling configuration — only used when cost_method == "sampling"
-    operator_num_samples: int = 50
+    operator_num_samples: int = 250
     evaluation_num_samples: int = 500
 
     # Random seed
@@ -23,6 +23,7 @@ class Configuration:
     # ALNS parameters
     alns_iterations: int = 1000
     alns_segment_length: int = 50
+    max_no_improve: Optional[int] = 300  # early stop after this many iters without improvement
 
     # RRT acceptance criterion
     rrt_deviation_factor: float = 0.01

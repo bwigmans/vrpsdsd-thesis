@@ -366,6 +366,15 @@ class SplitInsertion(InsertionOperator):
         self.operator_calculator = operator_calculator
         self.alpha_policy = alpha_policy
         self.alpha_grid = alpha_grid
+        # Diagnostic stats reset each ALNS run
+        self.stats = {
+            'splits_attempted': 0,    # times a split pair was found and inserted
+            'alpha_chosen': [],       # alpha1 value chosen for each split
+            'position_r1': [],        # normalized position in r1 (0=first, 1=last customer)
+            'position_r2': [],        # normalized position in r2
+            'r1_len': [],             # num customers in r1 at split time
+            'r2_len': [],             # num customers in r2 at split time
+        }
 
     def insert(
         self,
@@ -428,7 +437,7 @@ class SplitInsertion(InsertionOperator):
             node1 = None
             node2 = None
             if len(unpaired_routes) >= 2:
-                alpha1, alpha2 = compute_alpha(self.alpha_policy, unpaired_routes[0], unpaired_routes[1])
+                alpha1, alpha2 = compute_alpha(self.alpha_policy, unpaired_routes[0], unpaired_routes[1], node=node)
                 node1 = Node(
                     next_split_id(),
                     node.x,
@@ -469,9 +478,17 @@ class SplitInsertion(InsertionOperator):
                             continue
 
                         if self.alpha_grid:
-                            alphas_to_try = [(a, 1.0 - a) for a in self.alpha_grid]
+                            seen = set()
+                            alphas_to_try = []
+                            for a in self.alpha_grid:
+                                key = (min(a, 1.0 - a), max(a, 1.0 - a))
+                                if key not in seen:
+                                    seen.add(key)
+                                    alphas_to_try.append((key[0], key[1]))
+                                    if key[0] != key[1]:
+                                        alphas_to_try.append((key[1], key[0]))
                         else:
-                            alphas_to_try = [compute_alpha(self.alpha_policy, r1, r2)]
+                            alphas_to_try = [compute_alpha(self.alpha_policy, r1, r2, node=node)]
 
                         for alpha1, alpha2 in alphas_to_try:
                             node1.alpha = alpha1
@@ -494,6 +511,14 @@ class SplitInsertion(InsertionOperator):
                     r1, r2 = best_pair
                     pos1, pos2 = best_positions
                     node1.alpha, node2.alpha = best_alphas
+                    r1_cust = sum(1 for n in r1.nodes if not n.is_depot)
+                    r2_cust = sum(1 for n in r2.nodes if not n.is_depot)
+                    self.stats['splits_attempted'] += 1
+                    self.stats['alpha_chosen'].append(best_alphas[0])
+                    self.stats['position_r1'].append((pos1 - 1) / max(r1_cust, 1))
+                    self.stats['position_r2'].append((pos2 - 1) / max(r2_cust, 1))
+                    self.stats['r1_len'].append(r1_cust)
+                    self.stats['r2_len'].append(r2_cust)
                     r1.nodes.insert(pos1, node1)
                     r2.nodes.insert(pos2, node2)
                     solution.paired_routes[r1] = r2

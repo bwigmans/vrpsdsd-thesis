@@ -2,53 +2,63 @@
 Precomputes all demand samples upfront for the entire ALNS run.
 Slices are handed out per stage so dist.rvs() is never called during search.
 
-Layout per customer (total=50k):
-  [0      : 1000 ) — operator pool  (20 segments x 50)
-  [1000   : 41000) — eval pool      (up to 80 new-best events x 500)
-  [41000  : 42000) — post stage 1   (1000 fixed)
-  [42000  : 47000) — post stage 2   (5000 fixed)
+Layout per customer (total=50k), parameterised by op_size and eval_size:
+  [0                        : 20*op_size ) — operator pool  (20 segments x op_size)
+  [20*op_size               : post1_start) — eval pool      (up to 60 events x eval_size)
+  [post1_start              : post1_start+1000) — post stage 1 (1000 fixed)
+  [post1_start+1000         : post1_start+6000) — post stage 2 (5000 fixed)
 """
 import os
 import time
 import numpy as np
 from typing import Dict, Optional
 
-
 TOTAL_SAMPLES = 50_000
-
-_OP_OFFSET   = 0
-_OP_SIZE     = 50       # per segment
-_EVAL_OFFSET = 1_000
-_EVAL_SIZE   = 500      # per new-best event
-_EVAL_MAX    = 80       # max new-best events
-_POST1_OFFSET = 41_000
+_NUM_SEGMENTS = 20
+_EVAL_MAX     = 60
 _POST1_SIZE   = 1_000
-_POST2_OFFSET = 42_000
 _POST2_SIZE   = 5_000
 
 
 class DemandSampleBank:
     """
     Holds TOTAL_SAMPLES pre-drawn demand values per customer.
-    All slices are views (no copy) into the underlying array.
+    op_size and eval_size are wired from config at construction time.
     """
 
-    def __init__(self, instance, seed: Optional[int] = None, verbose: bool = True):
+    def __init__(
+        self,
+        instance,
+        op_size: int = 500,
+        eval_size: int = 500,
+        seed: Optional[int] = None,
+        verbose: bool = True,
+    ):
+        self.op_size   = op_size
+        self.eval_size = eval_size
+        self._op_offset   = 0
+        self._eval_offset = _NUM_SEGMENTS * op_size
+        self._post1_offset = self._eval_offset + _EVAL_MAX * eval_size
+        self._post2_offset = self._post1_offset + _POST1_SIZE
+
+        needed = self._post2_offset + _POST2_SIZE
+        total  = max(TOTAL_SAMPLES, needed)
+
         rng = np.random.default_rng(seed)
         customers = [n for n in instance.nodes if not n.is_depot]
 
         if verbose:
-            print(f"  [sample-bank] precomputing {TOTAL_SAMPLES:,} samples x {len(customers)} customers...", flush=True)
+            print(f"  [sample-bank] precomputing {total:,} samples x {len(customers)} customers "
+                  f"(op={op_size}, eval={eval_size})...", flush=True)
         t0 = time.perf_counter()
 
         self._bank: Dict[int, np.ndarray] = {}
         for node in customers:
             dist = instance.get_demand_distribution(node)
-            self._bank[node.id] = dist.rvs(size=TOTAL_SAMPLES, random_state=rng).astype(np.float64)
+            self._bank[node.id] = dist.rvs(size=total, random_state=rng).astype(np.float64)
 
         if verbose:
-            elapsed = time.perf_counter() - t0
-            print(f"  [sample-bank] done in {elapsed:.1f}s", flush=True)
+            print(f"  [sample-bank] done in {time.perf_counter() - t0:.1f}s", flush=True)
 
         self._eval_counter = 0
 
@@ -57,51 +67,79 @@ class DemandSampleBank:
     # ------------------------------------------------------------------
 
     def save(self, path: str) -> None:
-        """Save bank to a .npz file."""
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        np.savez_compressed(path, **{str(cid): arr for cid, arr in self._bank.items()})
+        np.savez_compressed(
+            path,
+            _meta_op_size=np.array([self.op_size]),
+            _meta_eval_size=np.array([self.eval_size]),
+            **{str(cid): arr for cid, arr in self._bank.items()},
+        )
         print(f"  [sample-bank] saved to {path}", flush=True)
 
     @classmethod
     def load(cls, path: str, verbose: bool = True) -> "DemandSampleBank":
-        """Load a previously saved bank from a .npz file."""
         obj = cls.__new__(cls)
         data = np.load(path)
-        obj._bank = {int(k): data[k].astype(np.float64) for k in data.files}
+        op_size   = int(data["_meta_op_size"][0])
+        eval_size = int(data["_meta_eval_size"][0])
+        obj.op_size   = op_size
+        obj.eval_size = eval_size
+        obj._op_offset    = 0
+        obj._eval_offset  = _NUM_SEGMENTS * op_size
+        obj._post1_offset = obj._eval_offset + _EVAL_MAX * eval_size
+        obj._post2_offset = obj._post1_offset + _POST1_SIZE
+        obj._bank = {
+            int(k): data[k].astype(np.float64)
+            for k in data.files if not k.startswith("_meta")
+        }
         obj._eval_counter = 0
         if verbose:
-            n_customers = len(obj._bank)
-            n_samples = next(iter(obj._bank.values())).shape[0]
-            print(f"  [sample-bank] loaded {n_samples:,} samples x {n_customers} customers from {path}", flush=True)
+            n = next(iter(obj._bank.values())).shape[0]
+            print(f"  [sample-bank] loaded {n:,} samples x {len(obj._bank)} customers "
+                  f"(op={op_size}, eval={eval_size}) from {path}", flush=True)
         return obj
 
     @classmethod
-    def load_or_create(cls, path: str, instance, seed: Optional[int] = None, verbose: bool = True) -> "DemandSampleBank":
-        """Load from disk if available, otherwise generate and save."""
+    def load_or_create(
+        cls,
+        path: str,
+        instance,
+        op_size: int = 500,
+        eval_size: int = 500,
+        seed: Optional[int] = None,
+        verbose: bool = True,
+    ) -> "DemandSampleBank":
         if os.path.exists(path):
-            return cls.load(path, verbose=verbose)
-        bank = cls(instance, seed=seed, verbose=verbose)
+            bank = cls.load(path, verbose=verbose)
+            if bank.op_size == op_size and bank.eval_size == eval_size:
+                return bank
+            if verbose:
+                print(f"  [sample-bank] config mismatch (op={bank.op_size}→{op_size}, "
+                      f"eval={bank.eval_size}→{eval_size}), regenerating...", flush=True)
+        bank = cls(instance, op_size=op_size, eval_size=eval_size, seed=seed, verbose=verbose)
         bank.save(path)
         return bank
 
+    # ------------------------------------------------------------------
+    # Slices
+    # ------------------------------------------------------------------
+
     def operator_slice(self, segment_idx: int) -> Dict[int, np.ndarray]:
-        """50 samples for segment `segment_idx` (wraps if > 20 segments)."""
-        start = _OP_OFFSET + (segment_idx % 20) * _OP_SIZE
-        return {cid: arr[start: start + _OP_SIZE] for cid, arr in self._bank.items()}
+        start = self._op_offset + (segment_idx % _NUM_SEGMENTS) * self.op_size
+        return {cid: arr[start: start + self.op_size] for cid, arr in self._bank.items()}
 
     def eval_slice(self) -> Dict[int, np.ndarray]:
-        """500 samples for the next new-best eval event."""
         idx = self._eval_counter % _EVAL_MAX
         self._eval_counter += 1
-        start = _EVAL_OFFSET + idx * _EVAL_SIZE
-        return {cid: arr[start: start + _EVAL_SIZE] for cid, arr in self._bank.items()}
+        start = self._eval_offset + idx * self.eval_size
+        return {cid: arr[start: start + self.eval_size] for cid, arr in self._bank.items()}
 
     @property
     def post_stage1(self) -> Dict[int, np.ndarray]:
-        """1000 fixed samples for post-processing split search."""
-        return {cid: arr[_POST1_OFFSET: _POST1_OFFSET + _POST1_SIZE] for cid, arr in self._bank.items()}
+        return {cid: arr[self._post1_offset: self._post1_offset + _POST1_SIZE]
+                for cid, arr in self._bank.items()}
 
     @property
     def post_stage2(self) -> Dict[int, np.ndarray]:
-        """5000 fixed samples for final solution quality evaluation."""
-        return {cid: arr[_POST2_OFFSET: _POST2_OFFSET + _POST2_SIZE] for cid, arr in self._bank.items()}
+        return {cid: arr[self._post2_offset: self._post2_offset + _POST2_SIZE]
+                for cid, arr in self._bank.items()}

@@ -1,0 +1,108 @@
+{
+  "seed": 47,
+  "base_cost": 1395.3016129217986,
+  "exact": {
+    "customer": 19,
+    "r1": 5,
+    "r2": 7,
+    "score": -5.911048
+  },
+  "oracle": {
+    "customer": 24,
+    "r1": 5,
+    "r2": 7,
+    "score": -40.33471
+  },
+  "table": [
+    {
+      "customer": 24,
+      "r1": 5,
+      "r2": 7,
+      "oracle": -40.3347,
+      "best_fixed": 0.7979,
+      "premium": -41.1326,
+      "best_exact": -3.9151
+    },
+    {
+      "customer": 19,
+      "r1": 5,
+      "r2": 7,
+      "oracle": -38.8308,
+      "best_fixed": 1.1339,
+      "premium": -39.9647,
+      "best_exact": -5.911
+    },
+    {
+      "customer": 2,
+      "r1": 0,
+      "r2": 6,
+      "oracle": -30.3609,
+      "best_fixed": 2.0193,
+      "premium": -32.3801,
+      "best_exact": -1.9145
+    },
+    {
+      "customer": 4,
+      "r1": 0,
+      "r2": 6,
+      "oracle": -29.9301,
+      "best_fixed": 2.4496,
+      "premium": -32.3797,
+      "best_exact": -2.5812
+    },
+    {
+      "customer": 2,
+      "r1": 0,
+      "r2": 2,
+      "oracle": -29.1874,
+      "best_fixed": 1.4583,
+      "premium": -30.6457,
+      "best_exact": -1.9359
+    },
+    {
+      "customer": 4,
+      "r1": 0,
+      "r2": 2,
+      "oracle": -27.7507,
+      "best_fixed": 3.1819,
+      "premium": -30.9326,
+      "best_exact": -0.9935
+    },
+    {
+      "customer": 22,
+      "r1": 8,
+      "r2": 5,
+      "oracle": -18.2224,
+      "best_fixed": -1.0347,
+      "premium": -17.1877,
+      "best_exact": 1.6047
+    },
+    {
+      "customer": 20,
+      "r1": 8,
+      "r2": 5,
+      "oracle": -6.6698,
+      "best_fixed": -0.8176,
+      "premium": -5.8522,
+      "best_exact": 2.2902
+    },
+    {
+      "customer": 12,
+      "r1": 1,
+      "r2": 3,
+      "oracle": -6.0345,
+      "best_fixed": -0.5054,
+      "premium": -5.5291,
+      "best_exact": 0.4141
+    },
+    {
+      "customer": 14,
+      "r1": 1,
+      "r2": 3,
+      "oracle": -5.6773,
+      "best_fixed": -0.4394,
+      "premium": -5.238,
+      "best_exact": 0.3381
+    }
+  ]
+}

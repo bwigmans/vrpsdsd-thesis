@@ -1,0 +1,108 @@
+{
+  "seed": 46,
+  "sample_base_cost": 1427.1531741320393,
+  "exact": {
+    "customer": 19,
+    "r1": 1,
+    "r2": 3,
+    "score": -6.089634
+  },
+  "oracle": {
+    "customer": 20,
+    "r1": 1,
+    "r2": 3,
+    "score": -40.761234
+  },
+  "table": [
+    {
+      "customer": 20,
+      "r1": 1,
+      "r2": 3,
+      "oracle": -40.7612,
+      "best_fixed": -0.6941,
+      "premium": -40.0671,
+      "best_exact": -4.0725
+    },
+    {
+      "customer": 19,
+      "r1": 1,
+      "r2": 3,
+      "oracle": -38.7898,
+      "best_fixed": -0.1962,
+      "premium": -38.5936,
+      "best_exact": -6.0896
+    },
+    {
+      "customer": 22,
+      "r1": 7,
+      "r2": 1,
+      "oracle": -17.5095,
+      "best_fixed": -1.7694,
+      "premium": -15.7401,
+      "best_exact": 2.658
+    },
+    {
+      "customer": 24,
+      "r1": 7,
+      "r2": 1,
+      "oracle": -8.5026,
+      "best_fixed": -0.5877,
+      "premium": -7.9149,
+      "best_exact": 3.6969
+    },
+    {
+      "customer": 24,
+      "r1": 7,
+      "r2": 3,
+      "oracle": -7.0252,
+      "best_fixed": -0.6484,
+      "premium": -6.3767,
+      "best_exact": -0.0043
+    },
+    {
+      "customer": 14,
+      "r1": 6,
+      "r2": 2,
+      "oracle": -6.6087,
+      "best_fixed": -0.0075,
+      "premium": -6.6013,
+      "best_exact": 0.3238
+    },
+    {
+      "customer": 11,
+      "r1": 6,
+      "r2": 2,
+      "oracle": -6.0765,
+      "best_fixed": -0.7256,
+      "premium": -5.3509,
+      "best_exact": 0.5592
+    },
+    {
+      "customer": 10,
+      "r1": 4,
+      "r2": 2,
+      "oracle": -6.0751,
+      "best_fixed": -0.7455,
+      "premium": -5.3296,
+      "best_exact": 0.8379
+    },
+    {
+      "customer": 12,
+      "r1": 4,
+      "r2": 2,
+      "oracle": -5.8617,
+      "best_fixed": -0.5568,
+      "premium": -5.3049,
+      "best_exact": 1.0124
+    },
+    {
+      "customer": 9,
+      "r1": 4,
+      "r2": 2,
+      "oracle": -5.7959,
+      "best_fixed": -1.3491,
+      "premium": -4.4469,
+      "best_exact": 0.4622
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+{
+  "seed": 42,
+  "sample_base_cost": 1419.3304497725503,
+  "exact": {
+    "customer": 19,
+    "r1": 7,
+    "r2": 5,
+    "score": -6.089634
+  },
+  "oracle": {
+    "customer": 20,
+    "r1": 7,
+    "r2": 5,
+    "score": -40.761234
+  },
+  "table": [
+    {
+      "customer": 20,
+      "r1": 7,
+      "r2": 5,
+      "oracle": -40.7612,
+      "best_fixed": -0.6941,
+      "premium": -40.0671,
+      "best_exact": -4.0725
+    },
+    {
+      "customer": 19,
+      "r1": 7,
+      "r2": 5,
+      "oracle": -38.7898,
+      "best_fixed": -0.1962,
+      "premium": -38.5936,
+      "best_exact": -6.0896
+    },
+    {
+      "customer": 2,
+      "r1": 8,
+      "r2": 2,
+      "oracle": -30.3609,
+      "best_fixed": 2.0193,
+      "premium": -32.3801,
+      "best_exact": -1.9145
+    },
+    {
+      "customer": 4,
+      "r1": 8,
+      "r2": 2,
+      "oracle": -29.9301,
+      "best_fixed": 2.4496,
+      "premium": -32.3797,
+      "best_exact": -2.5812
+    },
+    {
+      "customer": 2,
+      "r1": 8,
+      "r2": 0,
+      "oracle": -29.1874,
+      "best_fixed": 1.4583,
+      "premium": -30.6457,
+      "best_exact": -1.9359
+    },
+    {
+      "customer": 4,
+      "r1": 8,
+      "r2": 0,
+      "oracle": -27.7507,
+      "best_fixed": 3.1819,
+      "premium": -30.9326,
+      "best_exact": -0.9935
+    },
+    {
+      "customer": 22,
+      "r1": 1,
+      "r2": 7,
+      "oracle": -17.5095,
+      "best_fixed": -1.7694,
+      "premium": -15.7401,
+      "best_exact": 2.658
+    },
+    {
+      "customer": 24,
+      "r1": 1,
+      "r2": 7,
+      "oracle": -8.5026,
+      "best_fixed": -0.5877,
+      "premium": -7.9149,
+      "best_exact": 3.6969
+    },
+    {
+      "customer": 24,
+      "r1": 1,
+      "r2": 5,
+      "oracle": -7.0252,
+      "best_fixed": -0.6484,
+      "premium": -6.3767,
+      "best_exact": -0.0043
+    },
+    {
+      "customer": 12,
+      "r1": 4,
+      "r2": 3,
+      "oracle": -6.0345,
+      "best_fixed": -0.5054,
+      "premium": -5.5291,
+      "best_exact": 0.4141
+    },
+    {
+      "customer": 14,
+      "r1": 4,
+      "r2": 3,
+      "oracle": -5.6773,
+      "best_fixed": -0.4394,
+      "premium": -5.238,
+      "best_exact": 0.3381
+    }
+  ]
+}

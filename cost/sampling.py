@@ -47,6 +47,16 @@ class SamplingCostCalculator(CostCalculator):
         self._cache[sig] = cost
         return cost
 
+    def evaluate_solution(self, solution) -> float:
+        """Coordinated solution evaluation. Paired routes use compute_split_pair_costs
+        (alpha_r1 + alpha_r2 = 1 guaranteed). Falls back to get_total_cost otherwise."""
+        from core.recourse import AdaptivePairedVehicleRecourse
+        if isinstance(self.recourse_policy, AdaptivePairedVehicleRecourse):
+            samples = self.sampling_strategy._precomputed
+            if samples is not None:
+                return solution.get_total_cost_adaptive(self.recourse_policy, samples)
+        return solution.get_total_cost(self)
+
     def invalidate_cache(self) -> None:
         """Clear the route cost cache (call when starting a new major phase)."""
         self._cache.clear()

@@ -1,4 +1,10 @@
+import os
 from core.instance import Node, ProblemInstance
+
+
+def sample_bank_path(instance_file: str, dist: str = "poisson", base_dir: str = "data/samples") -> str:
+    stem = os.path.splitext(os.path.basename(instance_file))[0]
+    return os.path.join(base_dir, f"sample_bank_{stem}_{dist}.npz")
 
 
 def scale_demands(nodes, Q, l, u):

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 from core.route import Route
 
 
@@ -138,3 +139,291 @@ class PairedVehicleRecourse(RecoursePolicy):
     def _get_paired_route(self, route: Route) -> Optional[Route]:
         """Get route paired with given route (for cooperative policy)."""
         return self.paired_routes.get(route, None)
+
+
+_ORACLE_ALPHA_GRID = [round(i * 0.1, 1) for i in range(0, 11)]
+
+
+class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
+    """
+    Paired vehicle recourse with adaptive alpha at split vertices.
+
+    Modes:
+      alpha_policy: delivery-time policy (lei, equalize_slack, marginal_cost)
+      oracle_mode='oracle_true': full hindsight — tries all alphas per realization, picks min cost
+      oracle_mode='oracle_avg': r1 (closest to depot) samples future demands, picks best alpha
+                                in expectation; r2 falls back to node.alpha
+    """
+
+    def __init__(self, alpha_policy=None, paired_routes: Dict[Route, Route] = None,
+                 oracle_mode: Optional[str] = None, oracle_samples: int = 50,
+                 rng=None):
+        super().__init__(paired_routes)
+        self.alpha_policy = alpha_policy
+        self.oracle_mode = oracle_mode  # None | 'oracle_true' | 'oracle_avg'
+        self.oracle_samples = oracle_samples
+        self.rng = rng if rng is not None else np.random.default_rng(0)
+
+    def compute_cost(
+        self, route: Route, demand_realization: List[float], paired_route=None
+    ) -> float:
+        """Per-route approximation used during ALNS search. For coordinated evaluation
+        (guaranteed alpha_r1 + alpha_r2 = 1) use compute_split_pair_costs()."""
+        if self.oracle_mode is not None:
+            raise RuntimeError(
+                f"{self.oracle_mode} requires coordinated evaluation — use compute_split_pair_costs()"
+            )
+        return self._compute_cost_single(route, demand_realization, paired_route)
+
+    def _compute_cost_single(
+        self, route: Route, demand_realization: List[float], paired_route=None
+    ) -> float:
+        """Single-route simulation — approximation for unpaired routes or search."""
+        Q = route.instance.vehicle_capacity
+        remaining = Q
+        total_recourse = 0.0
+        nodes = route.nodes
+        customers = [n for n in nodes if not n.is_depot]
+
+        if len(demand_realization) != len(customers):
+            raise ValueError("demand_realization length must equal number of customers")
+
+        for i, (node, demand_total) in enumerate(zip(customers, demand_realization)):
+            next_node = customers[i + 1] if i + 1 < len(customers) else nodes[0]
+
+            if node.is_split:
+                # demand_total is the full customer demand draw (unscaled by alpha)
+                alpha = self.alpha_policy(remaining, demand_total, node, paired_route)
+                alpha = float(np.clip(alpha, 0.0, 1.0))
+                demand = demand_total * alpha
+            else:
+                demand = demand_total
+
+            if demand > remaining + 1e-9:
+                cost, remaining = self._handle_type1_failure(
+                    route, node, next_node, remaining, demand
+                )
+                total_recourse += cost
+            elif abs(demand - remaining) < 1e-9:
+                cost, remaining = self._handle_type2_failure(
+                    route, node, next_node
+                )
+                total_recourse += cost
+            else:
+                remaining -= demand
+
+        return total_recourse
+
+    # ── oracle helpers ─────────────────────────────────────────────────────────
+
+    def _sim_from(self, route: Route, customers: list, start: int,
+                  remaining: float, demands: List[float]) -> float:
+        """Simulate customers[start:] with pre-scaled demands, return recourse cost."""
+        total = 0.0
+        for k, (node, demand) in enumerate(zip(customers[start:], demands)):
+            next_node = customers[start + k + 1] if start + k + 1 < len(customers) else route.nodes[0]
+            if demand > remaining + 1e-9:
+                cost, remaining = self._handle_type1_failure(route, node, next_node, remaining, demand)
+                total += cost
+            elif abs(demand - remaining) < 1e-9:
+                cost, remaining = self._handle_type2_failure(route, node, next_node)
+                total += cost
+            else:
+                remaining -= demand
+        return total
+
+    def _sim_with_alpha(self, route: Route, customers: list, demands: List[float],
+                        alpha: float, original_id: int) -> float:
+        """Simulate route applying alpha to the split node for original_id, return recourse cost."""
+        Q = route.instance.vehicle_capacity
+        remaining = Q
+        total = 0.0
+        for k, (node, demand_total) in enumerate(zip(customers, demands)):
+            next_node = customers[k + 1] if k + 1 < len(customers) else route.nodes[0]
+            if node.is_split and getattr(node, 'original_id', node.id) == original_id:
+                demand = demand_total * alpha
+            else:
+                demand = demand_total
+            if demand > remaining + 1e-9:
+                cost, remaining = self._handle_type1_failure(route, node, next_node, remaining, demand)
+                total += cost
+            elif abs(demand - remaining) < 1e-9:
+                cost, remaining = self._handle_type2_failure(route, node, next_node)
+                total += cost
+            else:
+                remaining -= demand
+        return total
+
+    def _best_alpha_by_sampling(self, route: Route, customers: list,
+                                 split_idx: int, remaining: float,
+                                 demand_total: float) -> float:
+        """Sample oracle_samples future demand vectors; return alpha with min average cost."""
+        node = customers[split_idx]
+        next_node = customers[split_idx + 1] if split_idx + 1 < len(customers) else route.nodes[0]
+        future_customers = customers[split_idx + 1:]
+        alpha_totals = {a: 0.0 for a in _ORACLE_ALPHA_GRID}
+
+        for _ in range(self.oracle_samples):
+            future_demands = [
+                float(route.instance.get_demand_distribution(nd).rvs(random_state=self.rng))
+                * (nd.alpha if nd.is_split else 1.0)
+                for nd in future_customers
+            ]
+            for alpha in _ORACLE_ALPHA_GRID:
+                d = demand_total * alpha
+                if d > remaining + 1e-9:
+                    c, rem = self._handle_type1_failure(route, node, next_node, remaining, d)
+                elif abs(d - remaining) < 1e-9:
+                    c, rem = self._handle_type2_failure(route, node, next_node)
+                else:
+                    c, rem = 0.0, remaining - d
+                c += self._sim_from(route, customers, split_idx + 1, rem, future_demands)
+                alpha_totals[alpha] += c
+
+        return min(alpha_totals, key=lambda a: alpha_totals[a])
+
+    def _dist_to_split(self, route: Route, original_id: int) -> float:
+        """Cumulative travel distance from depot to the split node for original_id."""
+        dist = 0.0
+        prev = route.nodes[0]
+        for n in route.nodes[1:]:
+            dist += route.instance.get_distance(prev, n)
+            if n.is_split and getattr(n, 'original_id', n.id) == original_id:
+                return dist
+            if not n.is_depot:
+                prev = n
+        return float('inf')
+
+    def _simulate_route(
+        self, route: Route, demands: List[float], paired_route=None,
+        complement_alpha: Optional[float] = None, original_id: Optional[int] = None,
+    ):
+        """
+        Simulate one route for one sample.
+        Returns (recourse_cost, alpha_used). If complement_alpha is set, the split
+        partner node delivers (1 - complement_alpha) instead of the policy.
+        """
+        Q = route.instance.vehicle_capacity
+        remaining = Q
+        total_recourse = 0.0
+        customers = [n for n in route.nodes if not n.is_depot]
+        alpha_used = None
+
+        for i, (node, demand_total) in enumerate(zip(customers, demands)):
+            next_node = customers[i + 1] if i + 1 < len(customers) else route.nodes[0]
+
+            if node.is_split:
+                if complement_alpha is not None and getattr(node, "original_id", node.id) == original_id:
+                    alpha = float(np.clip(1.0 - complement_alpha, 0.0, 1.0))
+                else:
+                    alpha = self.alpha_policy(remaining, demand_total, node, paired_route)
+                    alpha = float(np.clip(alpha, 0.0, 1.0))
+                    alpha_used = alpha
+                demand = demand_total * alpha
+            else:
+                demand = demand_total
+
+            if demand > remaining + 1e-9:
+                cost, remaining = self._handle_type1_failure(route, node, next_node, remaining, demand)
+                total_recourse += cost
+            elif abs(demand - remaining) < 1e-9:
+                cost, remaining = self._handle_type2_failure(route, node, next_node)
+                total_recourse += cost
+            else:
+                remaining -= demand
+
+        return total_recourse, alpha_used
+
+    def compute_split_pair_costs(
+        self,
+        r1: Route, r2: Route,
+        demands_r1: List[List[float]],
+        demands_r2: List[List[float]],
+        original_id: int,
+    ):
+        """
+        Coordinated evaluation: r1 decides alpha, r2 uses 1 - alpha_r1.
+        Guarantees alpha_r1 + alpha_r2 = 1 per sample.
+
+        oracle_avg: r1 (closest to depot) samples future demands to pick best alpha,
+                    r2 waits and delivers the complement.
+        alpha_policy: r1 uses policy(q1_rem, xi_v), r2 uses complement.
+        Returns (costs_r1, costs_r2) as numpy arrays of length N.
+        """
+        N = len(demands_r1)
+        costs_r1 = np.zeros(N)
+        costs_r2 = np.zeros(N)
+
+        if self.oracle_mode == 'oracle_true':
+            r1_customers = [n for n in r1.nodes if not n.is_depot]
+            r2_customers = [n for n in r2.nodes if not n.is_depot]
+            for i in range(N):
+                best_cost = float('inf')
+                best_alpha = 0.0
+                for alpha in _ORACLE_ALPHA_GRID:
+                    c1 = self._sim_with_alpha(r1, r1_customers, demands_r1[i], alpha, original_id)
+                    c2 = self._sim_with_alpha(r2, r2_customers, demands_r2[i], round(1.0 - alpha, 10), original_id)
+                    if c1 + c2 < best_cost:
+                        best_cost = c1 + c2
+                        best_alpha = alpha
+                costs_r1[i] = self._sim_with_alpha(r1, r1_customers, demands_r1[i], best_alpha, original_id)
+                costs_r2[i] = self._sim_with_alpha(r2, r2_customers, demands_r2[i], round(1.0 - best_alpha, 10), original_id)
+
+        elif self.oracle_mode == 'oracle_avg':
+            # r1 = route whose vehicle arrives at the split node first (closer to depot)
+            if self._dist_to_split(r1, original_id) > self._dist_to_split(r2, original_id):
+                r1, r2 = r2, r1
+                demands_r1, demands_r2 = demands_r2, demands_r1
+            r1_customers = [n for n in r1.nodes if not n.is_depot]
+            for i in range(N):
+                cost_r1, alpha_r1 = self._simulate_oracle_avg(r1, r1_customers, demands_r1[i])
+                cost_r2, _ = self._simulate_route(
+                    r2, demands_r2[i], paired_route=r1,
+                    complement_alpha=alpha_r1, original_id=original_id,
+                )
+                costs_r1[i] = cost_r1
+                costs_r2[i] = cost_r2
+        else:
+            for i in range(N):
+                cost_r1, alpha_r1 = self._simulate_route(r1, demands_r1[i], paired_route=r2)
+                cost_r2, _ = self._simulate_route(
+                    r2, demands_r2[i], paired_route=r1,
+                    complement_alpha=alpha_r1, original_id=original_id,
+                )
+                costs_r1[i] = cost_r1
+                costs_r2[i] = cost_r2
+
+        return costs_r1, costs_r2
+
+    def _simulate_oracle_avg(self, route: Route, customers: list,
+                              demands: List[float]):
+        """
+        Simulate route for oracle_avg: at each split node, sample future demands
+        and pick the alpha minimising expected cost. r2 will use the complement.
+        Returns (recourse_cost, alpha_used_at_split).
+        """
+        Q = route.instance.vehicle_capacity
+        remaining = Q
+        total_recourse = 0.0
+        alpha_used = None
+
+        for i, (node, demand_total) in enumerate(zip(customers, demands)):
+            next_node = customers[i + 1] if i + 1 < len(customers) else route.nodes[0]
+
+            if node.is_split:
+                alpha = self._best_alpha_by_sampling(route, customers, i, remaining, demand_total)
+                alpha_used = alpha
+                demand = demand_total * alpha
+            else:
+                demand = demand_total
+
+            if demand > remaining + 1e-9:
+                cost, remaining = self._handle_type1_failure(route, node, next_node, remaining, demand)
+                total_recourse += cost
+            elif abs(demand - remaining) < 1e-9:
+                cost, remaining = self._handle_type2_failure(route, node, next_node)
+                total_recourse += cost
+            else:
+                remaining -= demand
+
+        return total_recourse, alpha_used

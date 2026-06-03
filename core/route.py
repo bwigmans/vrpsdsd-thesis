@@ -1,5 +1,5 @@
 from typing import List
-from scipy.stats import poisson
+import numpy as np
 from core.instance import Node, ProblemInstance
 
 
@@ -18,7 +18,6 @@ class Route:
         if node.is_split:
             return node.mean_demand * node.alpha
         return node.mean_demand
-        
 
     def travel_cost(self) -> float:
         """Compute total travel distance."""
@@ -35,32 +34,55 @@ class Route:
                 load += self._planned_demand(node)
         return load
 
+    def _node_dist(self, node):
+        """Return the demand distribution scaled by alpha for split nodes."""
+        if not node.is_split:
+            return self.instance.get_demand_distribution(node)
+        effective_mean = node.mean_demand * node.alpha
+        raw = node.demand_distribution
+        if hasattr(raw, "dist") and hasattr(raw, "args"):
+            raw = raw.dist
+        try:
+            return raw(mu=effective_mean)
+        except TypeError:
+            return raw(effective_mean)
+
+    def _cum_pmf(self, up_to_position: int) -> np.ndarray:
+        """
+        Compute the PMF of cumulative demand for customers at positions 1..(up_to_position-1).
+        Returns array p where p[k] = P(X == k) for k = 0, 1, ..., Q.
+        Uses numerical convolution — correct for any demand distribution family.
+        """
+        Q = int(self.instance.vehicle_capacity)
+        cum_pmf = np.zeros(Q + 1)
+        cum_pmf[0] = 1.0
+        for j in range(1, up_to_position):
+            node = self.nodes[j]
+            if node.is_depot:
+                continue
+            dist = self._node_dist(node)
+            k_vals = np.arange(Q + 1)
+            node_pmf = np.array(dist.pmf(k_vals), dtype=float)
+            cum_pmf = np.convolve(cum_pmf, node_pmf)[: Q + 1]
+        return cum_pmf
+
     def second_type_failure_probability(self, position: int) -> float:
         """
         Probability that demand at vertex `position` exactly fills the remaining capacity.
-        Formula (discrete case): sum_{l=1}^{Q} P(ξ_i = l) * P(X_{i-1} = Q - l)
-        where Q = vehicle capacity (assumed integer).
+        Formula: sum_{l=1}^{Q} P(ξ_i = l) * P(X_{i-1} = Q - l)
         Position is index in self.nodes (must be >= 1, i.e., a customer vertex).
         """
-       
         if position <= 0 or position >= len(self.nodes):
             raise ValueError("Position must be a customer vertex (index >= 1 and < len(nodes))")
 
-        Q = int(self.instance.vehicle_capacity)  # assume integer capacity
-        node = self.nodes[position]
+        Q = int(self.instance.vehicle_capacity)
+        cum_pmf = self._cum_pmf(position)
+        dist = self._node_dist(self.nodes[position])
 
-        # Cumulative planned demand before this vertex (X_{i-1})
-        cum_before = 0.0
-        for j in range(1, position):
-            cum_before += self._planned_demand(self.nodes[j])
-        # Demand distribution for this vertex (full or split)
-        lam_vertex = self._planned_demand(node)
         prob = 0.0
-        # l runs from 1 to Q (demand values that cause second-type failure)
         for l in range(1, Q + 1):
-                # P(ξ_i = l) for Poisson with mean lam_vertex
-            p_demand = poisson.pmf(l, lam_vertex)
-            p_cum = poisson.pmf(Q - l, cum_before)
+            p_demand = float(dist.pmf(l))
+            p_cum = cum_pmf[Q - l] if Q - l >= 0 else 0.0
             prob += p_demand * p_cum
         return prob
 
@@ -69,24 +91,30 @@ class Route:
         Compute total failure probability at each vertex position (excluding depot).
         Based on Proposition 4: P_i = P(X_{i-1} <= Q-1) - P(X_i <= Q-1)
         Returns list aligned with self.nodes[1:] (first element corresponds to first customer).
+        Uses numerical convolution — correct for any demand distribution family.
         """
         if len(self.nodes) <= 1:
             return []
 
         Q = int(self.instance.vehicle_capacity)
         probs = []
-        cum_lambda = 0.0  # cumulative planned demand up to previous vertex
+        cum_pmf = np.zeros(Q + 1)
+        cum_pmf[0] = 1.0  # P(X=0) = 1 before any customer
 
         for i in range(1, len(self.nodes)):
             node = self.nodes[i]
-            # Add planned demand of this vertex to cumulative
-            cum_after = cum_lambda + self._planned_demand(node) #cum first
+            if node.is_depot:
+                probs.append(0.0)
+                continue
+            cdf_before = float(np.sum(cum_pmf[:Q]))  # P(X_{i-1} <= Q-1)
 
-            # P(X_{i-1} <= Q-1) - P(X_i <= Q-1)
-            prob = poisson.cdf(Q - 1, cum_lambda) - poisson.cdf(Q - 1, cum_after)
-            probs.append(max(0.0, prob))  # guard against tiny negative due to float errors
+            dist = self._node_dist(node)
+            k_vals = np.arange(Q + 1)
+            node_pmf = np.array(dist.pmf(k_vals), dtype=float)
+            cum_pmf = np.convolve(cum_pmf, node_pmf)[: Q + 1]
 
-            cum_lambda = cum_after
+            cdf_after = float(np.sum(cum_pmf[:Q]))  # P(X_i <= Q-1)
+            probs.append(max(0.0, cdf_before - cdf_after))
 
         return probs
 
@@ -116,13 +144,21 @@ class Route:
         Also implicitly assumes each node's demand <= Q (Assumption 2) – user data must satisfy that.
         """
         if len(self.nodes) <= 1:
-            return True  # empty or depot-only route
+            return True
 
-        total_planned = self.expected_load()
-        Q = self.instance.vehicle_capacity
-        # Use integer Q for CDF
-        prob = poisson.cdf(2 * int(Q), total_planned)
-        return prob > 0.9
+        Q = int(self.instance.vehicle_capacity)
+        # Need PMF up to 2Q for this check
+        cum_pmf = np.zeros(2 * Q + 1)
+        cum_pmf[0] = 1.0
+        for j in range(1, len(self.nodes)):
+            node = self.nodes[j]
+            if node.is_depot:
+                continue
+            dist = self._node_dist(node)
+            k_vals = np.arange(2 * Q + 1)
+            node_pmf = np.array(dist.pmf(k_vals), dtype=float)
+            cum_pmf = np.convolve(cum_pmf, node_pmf)[: 2 * Q + 1]
+        return float(np.sum(cum_pmf[: 2 * Q + 1])) > 0.9
     
 
 if __name__ == "__main__":

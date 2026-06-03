@@ -218,9 +218,7 @@ run_single_instance.py
 run_splits_restart.py
 run_unsplit.py
 run_sampling_comparison.py
-test_dfsi_fix.py
-test_sampling_poisson.py
-test_si_fallback.py
+test_*.py
 try_splits.py
 try_splits_hardcoded.py
 verify_alpha.py
@@ -233,3 +231,6 @@ data/samples/
 
 # PDFs
 *.pdf
+
+# Markdown notes
+*.md

@@ -1,0 +1,99 @@
+{
+  "seed": 51,
+  "base_cost": 1411.5981367661498,
+  "exact": {
+    "customer": 4,
+    "r1": 0,
+    "r2": 8,
+    "score": -2.581217
+  },
+  "oracle": {
+    "customer": 2,
+    "r1": 0,
+    "r2": 8,
+    "score": -30.360889
+  },
+  "table": [
+    {
+      "customer": 2,
+      "r1": 0,
+      "r2": 8,
+      "oracle": -30.3609,
+      "best_fixed": 2.0193,
+      "premium": -32.3801,
+      "best_exact": -1.9145
+    },
+    {
+      "customer": 4,
+      "r1": 0,
+      "r2": 8,
+      "oracle": -29.9301,
+      "best_fixed": 2.4496,
+      "premium": -32.3797,
+      "best_exact": -2.5812
+    },
+    {
+      "customer": 2,
+      "r1": 0,
+      "r2": 7,
+      "oracle": -29.1874,
+      "best_fixed": 1.4583,
+      "premium": -30.6457,
+      "best_exact": -1.9359
+    },
+    {
+      "customer": 4,
+      "r1": 0,
+      "r2": 7,
+      "oracle": -27.7507,
+      "best_fixed": 3.1819,
+      "premium": -30.9326,
+      "best_exact": -0.9935
+    },
+    {
+      "customer": 22,
+      "r1": 4,
+      "r2": 3,
+      "oracle": -27.4158,
+      "best_fixed": 2.1311,
+      "premium": -29.5469,
+      "best_exact": -1.1333
+    },
+    {
+      "customer": 19,
+      "r1": 4,
+      "r2": 3,
+      "oracle": -27.1396,
+      "best_fixed": 2.1093,
+      "premium": -29.2489,
+      "best_exact": -1.4868
+    },
+    {
+      "customer": 22,
+      "r1": 4,
+      "r2": 6,
+      "oracle": -23.7519,
+      "best_fixed": 2.0703,
+      "premium": -25.8223,
+      "best_exact": -1.6993
+    },
+    {
+      "customer": 20,
+      "r1": 6,
+      "r2": 4,
+      "oracle": -6.2485,
+      "best_fixed": -0.7431,
+      "premium": -5.5054,
+      "best_exact": 0.1629
+    },
+    {
+      "customer": 23,
+      "r1": 6,
+      "r2": 3,
+      "oracle": -4.6691,
+      "best_fixed": 1.1606,
+      "premium": -5.8297,
+      "best_exact": -0.0723
+    }
+  ]
+}

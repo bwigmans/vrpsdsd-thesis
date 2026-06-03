@@ -75,13 +75,17 @@ class MonteCarloStrategy(SamplingStrategy):
         customers = [n for n in route.nodes if not n.is_depot]
         costs = []
 
+        from core.recourse import AdaptivePairedVehicleRecourse
+        is_adaptive = isinstance(self.recourse_policy, AdaptivePairedVehicleRecourse)
+
         if self._precomputed is not None:
             for i in range(num_samples):
                 demands = []
                 for node in customers:
                     cid = getattr(node, "original_id", node.id)
                     d = float(self._precomputed[cid][i])
-                    if node.is_split:
+                    # adaptive policy needs full unscaled demand — it applies alpha itself
+                    if node.is_split and not is_adaptive:
                         d *= node.alpha
                     demands.append(d)
                 costs.append(self.recourse_policy.compute_cost(route, demands, paired_route=paired_route))

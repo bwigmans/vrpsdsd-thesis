@@ -34,6 +34,7 @@ class ALNSSolver:
         config: Configuration,
         extra_removal_operators: list = None,
         extra_insertion_operators: list = None,
+        recourse_policy=None,
     ):
         """Initialize solver with problem instance and configuration parameters."""
         self.instance = instance
@@ -41,16 +42,20 @@ class ALNSSolver:
         self.rng = random.Random(config.seed)
         self.np_rng = np.random.default_rng(config.seed)
 
-        self.recourse_policy = PairedVehicleRecourse()
+        self.recourse_policy = recourse_policy if recourse_policy is not None else PairedVehicleRecourse()
 
         self.sample_bank = None
         if config.cost_method == "exact":
-            self.operator_calculator = ExactCostCalculator(self.recourse_policy)
-            self.evaluation_calculator = ExactCostCalculator(self.recourse_policy)
+            self.operator_calculator = ExactCostCalculator(self.recourse_policy, cache=True)
+            self.evaluation_calculator = ExactCostCalculator(self.recourse_policy, cache=True)
         else:
             bank_path = getattr(config, "sample_bank_path", None) or "data/samples/sample_bank.npz"
             self.sample_bank = DemandSampleBank.load_or_create(
-                bank_path, instance, seed=config.seed, verbose=config.verbose
+                bank_path, instance,
+                op_size=config.operator_num_samples,
+                eval_size=config.evaluation_num_samples,
+                seed=config.seed,
+                verbose=config.verbose,
             )
             self.operator_strategy = MonteCarloStrategy(self.recourse_policy)
             self.evaluation_strategy = MonteCarloStrategy(self.recourse_policy)
@@ -95,9 +100,15 @@ class ALNSSolver:
         self.insertion_scores = [0.0] * len(self.insertion_operators)
         self.removal_counts = [0] * len(self.removal_operators)
         self.insertion_counts = [0] * len(self.insertion_operators)
+        # Score breakdown per operator: how many times scored 30/10/6/0
+        self.removal_breakdown = [{'new_best': 0, 'improved': 0, 'accepted': 0, 'rejected': 0}
+                                   for _ in self.removal_operators]
+        self.insertion_breakdown = [{'new_best': 0, 'improved': 0, 'accepted': 0, 'rejected': 0}
+                                    for _ in self.insertion_operators]
 
     def solve(self, initial_solution: Solution = None) -> Solution:
         """Main ALNS optimization loop."""
+        exact_calc = ExactCostCalculator(self.recourse_policy)
         initial_solution = initial_solution or InitialSolutionBuilder(self.instance).build()
 
         current_solution = initial_solution.copy()
@@ -107,6 +118,7 @@ class ALNSSolver:
         current_cost = record_cost
         iterations_without_improvement = 0
         lock_splits = self.config.lock_splits
+        accepted_count = 0
 
         for iteration in range(self.config.alns_iterations):
             # Refresh operator samples at the start of each segment
@@ -133,17 +145,17 @@ class ALNSSolver:
             self.insertion_scores[insertion_idx] += score
             self.removal_counts[removal_idx] += 1
             self.insertion_counts[insertion_idx] += 1
+            score_key = {30: 'new_best', 10: 'improved', 6: 'accepted'}.get(score, 'rejected')
+            self.removal_breakdown[removal_idx][score_key] += 1
+            self.insertion_breakdown[insertion_idx][score_key] += 1
 
             if self._accept_solution(new_cost, record_cost, deviation):
+                accepted_count += 1
                 current_solution = new_solution
                 current_cost = new_cost
                 if new_cost < record_cost:
                     if self.config.alpha_reoptimize:
                         self._reoptimize_alphas(current_solution, label="new-best")
-                    # Advance eval to a fresh slice before re-evaluating
-                    if self.sample_bank is not None:
-                        self.evaluation_strategy.set_samples(self.sample_bank.eval_slice())
-                        self.evaluation_calculator.invalidate_cache()
                     accurate_cost = current_solution.get_total_cost(self.evaluation_calculator)
                     current_cost = accurate_cost
                     # Only update record if accurate eval confirms improvement
@@ -165,11 +177,19 @@ class ALNSSolver:
                 self._reset_scores()
 
             if self.config.verbose and (iteration + 1) % self.config.log_frequency == 0:
+                accept_rate = accepted_count / self.config.log_frequency
+                exact_cost = best_solution.get_total_cost(exact_calc)
+                rem_w = [f"{w:.2f}" for w in self.removal_weights]
+                ins_w = [f"{w:.2f}" for w in self.insertion_weights]
                 print(
-                    f"Iteration {iteration + 1}/{self.config.alns_iterations} | "
-                    f"record={record_cost:.4f} | deviation={deviation:.4f} | "
-                    f"no_improve={iterations_without_improvement}"
+                    f"Iter {iteration + 1:>4}/{self.config.alns_iterations} | "
+                    f"record={record_cost:.4f} | exact={exact_cost:.4f} | "
+                    f"no_improve={iterations_without_improvement} | "
+                    f"accept={accept_rate:.0%} | "
+                    f"rem_w={rem_w} ins_w={ins_w}",
+                    flush=True,
                 )
+                accepted_count = 0
 
 
         if self.config.alpha_reoptimize:
@@ -185,6 +205,34 @@ class ALNSSolver:
                 print("  [split-post] no improving split found", flush=True)
 
         return best_solution
+
+    def print_diagnostics(self):
+        """Print operator performance breakdown and split insertion stats."""
+        import numpy as np
+        print("\n=== Operator Diagnostics ===")
+        print(f"{'Operator':<30}  {'Selected':>8}  {'NewBest':>8}  {'Improved':>8}  {'Accepted':>8}  {'Rejected':>8}  {'Impr%':>7}")
+        print("-" * 90)
+        for i, op in enumerate(self.removal_operators):
+            bd = self.removal_breakdown[i]
+            sel = self.removal_counts[i]
+            impr_pct = (bd['new_best'] + bd['improved']) / sel * 100 if sel > 0 else 0
+            print(f"  {type(op).__name__:<28}  {sel:>8}  {bd['new_best']:>8}  {bd['improved']:>8}  {bd['accepted']:>8}  {bd['rejected']:>8}  {impr_pct:>6.1f}%")
+        for i, op in enumerate(self.insertion_operators):
+            bd = self.insertion_breakdown[i]
+            sel = self.insertion_counts[i]
+            impr_pct = (bd['new_best'] + bd['improved']) / sel * 100 if sel > 0 else 0
+            print(f"  {type(op).__name__:<28}  {sel:>8}  {bd['new_best']:>8}  {bd['improved']:>8}  {bd['accepted']:>8}  {bd['rejected']:>8}  {impr_pct:>6.1f}%")
+
+        split_op = next((op for op in self.insertion_operators if isinstance(op, SplitInsertion)), None)
+        if split_op and split_op.stats['splits_attempted'] > 0:
+            s = split_op.stats
+            alphas = np.array(s['alpha_chosen'])
+            pos_r1 = np.array(s['position_r1'])
+            print(f"\n=== SplitInsertion Stats (n={s['splits_attempted']}) ===")
+            print(f"  Alpha chosen:    mean={alphas.mean():.3f}  std={alphas.std():.3f}  min={alphas.min():.2f}  max={alphas.max():.2f}")
+            print(f"  Position in r1:  mean={pos_r1.mean():.3f}  std={pos_r1.std():.3f}  (0=first customer, 1=last)")
+            print(f"  r1 length:       mean={np.mean(s['r1_len']):.1f}")
+            print(f"  r2 length:       mean={np.mean(s['r2_len']):.1f}")
 
     def _apply_removal(
         self, solution: Solution, removal_op, lock_splits: bool = False
