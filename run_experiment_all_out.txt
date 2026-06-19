@@ -1,0 +1,92 @@
+
+============================================================
+Instance: R101 (R), seed=42, 25c, [0.51,0.70]
+============================================================
+  [sample-bank] loaded 50,000 samples x 25 customers (op=250, eval=500) from data/samples/sample_bank_r101.npz
+  Phase 0 standard...
+  Phase 0 oracle...
+  Phase 1 standard...
+    std split: c21 r6->r8 oracle=-1.4062
+  Phase 1 oracle topology...
+    ora split: c6 r6->r8 oracle=-13.6689
+  Phase 2 evaluation...
+
+============================================================
+Instance: C101 (C1), seed=42, 25c, [0.51,0.70]
+============================================================
+  [sample-bank] loaded 50,000 samples x 25 customers (op=250, eval=500) from data/samples/sample_bank_c101.npz
+  Phase 0 standard...
+  Phase 0 oracle...
+  Phase 1 standard...
+    std split: c1 r1->r6 oracle=-4.4170
+  Phase 1 oracle topology...
+    ora split: c13 r5->r0 oracle=-32.4130
+    ora split: c4 r4->r6 oracle=-24.0525
+  Phase 2 evaluation...
+
+============================================================
+Instance: C201 (C2), seed=42, 25c, [0.51,0.70]
+============================================================
+  [sample-bank] loaded 50,000 samples x 25 customers (op=250, eval=500) from data/samples/sample_bank_c201.npz
+  Phase 0 standard...
+  Phase 0 oracle...
+    oracle: exact=951.272  routes=9  splits=[]  t=346s
+  Phase 1 standard...
+    std split: c9 r7->r2 oracle=-5.9425
+    std split: c21 r6->r8 oracle=-2.5495
+  Phase 1 oracle topology...
+    ora split: c8 r8->r5 oracle=-2.1691
+  Phase 2 evaluation...
+
+============================================================
+Instance: RC101 (RC), seed=42, 25c, [0.51,0.70]
+============================================================
+  [sample-bank] loaded 50,000 samples x 25 customers (op=250, eval=500) from data/samples/sample_bank_rc101.npz
+  Phase 0 standard...
+  Phase 0 oracle...
+    oracle: exact=1418.158  routes=9  splits=[4, 23]  t=417s
+  Phase 1 standard...
+    std split: c20 r7->r5 oracle=-40.7612
+    std split: c2 r8->r2 oracle=-30.3609
+    std split: c12 r4->r3 oracle=-6.0345
+  Phase 1 oracle topology...
+    ora split: c19 r0->r4 oracle=-49.0396
+    ora split: c3 r5->r8 oracle=-42.6315
+    ora split: c12 r1->r2 oracle=-5.7468
+  Phase 2 evaluation...
+
+================================================================================
+SUMMARY — Standard vs Oracle topology (std+split vs ora+split, Phase 2)
+================================================================================
+
+[oracle_true]
+  Inst     std+split   ora+split  diff(ora-std)   win
+  --------------------------------------------------
+  R101      1045.221    1046.348         +1.127   std
+  C101       832.309     840.544         +8.235   std
+  C201       954.030     968.743        +14.713   std
+  RC101     1342.998    1356.525        +13.527   std
+
+[oracle_avg]
+  Inst     std+split   ora+split  diff(ora-std)   win
+  --------------------------------------------------
+  R101      1045.221    1046.370         +1.149   std
+  C101       837.002     850.165        +13.163   std
+  C201       961.675     969.015         +7.340   std
+  RC101     1370.519    1396.498        +25.979   std
+
+[eq_slack]
+  Inst     std+split   ora+split  diff(ora-std)   win
+  --------------------------------------------------
+  R101      1049.007    1066.338        +17.331   std
+  C101       843.284     882.006        +38.722   std
+  C201       966.028     971.031         +5.003   std
+  RC101     1433.923    1521.676        +87.753   std
+
+[marg_cost]
+  Inst     std+split   ora+split  diff(ora-std)   win
+  --------------------------------------------------
+  R101      1049.079    1066.405        +17.326   std
+  C101       843.284     882.006        +38.722   std
+  C201       966.302     971.031         +4.728   std
+  RC101     1435.049    1521.756        +86.708   std

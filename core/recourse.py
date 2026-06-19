@@ -13,13 +13,6 @@ class RecoursePolicy(ABC):
         """Compute recourse cost for given demand realization."""
         pass
 
-    def compute_vertex_costs(
-        self, route: Route, demand_realization: List[float]
-    ) -> Dict['Node', float]:
-        """Compute per-vertex recourse cost contributions for a realization."""
-        pass
-
-
 class PairedVehicleRecourse(RecoursePolicy):
     def __init__(self, paired_routes: Dict[Route, Route] = None):
         """Initialize with route pairings for split deliveries."""
@@ -67,43 +60,6 @@ class PairedVehicleRecourse(RecoursePolicy):
 
         return total_recourse
 
-    def compute_vertex_costs(
-        self, route: Route, demand_realization: List[float], paired_route: Optional[Route] = None
-    ) -> Dict['Node', float]:
-        """Return per-vertex recourse costs for a demand realization."""
-        Q = route.instance.vehicle_capacity
-        remaining = Q
-        nodes = route.nodes
-        customers = [n for n in nodes if not n.is_depot]
-
-        if len(demand_realization) != len(customers):
-            raise ValueError("demand_realization length must equal number of customers")
-
-        costs = {node: 0.0 for node in customers}
-
-        for i, (node, demand_total) in enumerate(zip(customers, demand_realization)):
-            if i + 1 < len(customers):
-                next_node = customers[i + 1]
-            else:
-                next_node = nodes[0]
-
-            demand = demand_total
-
-            if demand > remaining + 1e-9:
-                cost, remaining = self._handle_type1_failure(
-                    route, node, next_node, remaining, demand
-                )
-                costs[node] += cost
-            elif abs(demand - remaining) < 1e-9:
-                cost, remaining = self._handle_type2_failure(
-                    route, node, next_node
-                )
-                costs[node] += cost
-            else:
-                remaining -= demand
-
-        return costs
-
     def _handle_type1_failure(
         self, route: Route, node, next_node, remaining: float, demand: float
     ) -> Tuple[float, float]:
@@ -144,6 +100,7 @@ class PairedVehicleRecourse(RecoursePolicy):
 _ORACLE_ALPHA_GRID = [round(i * 0.1, 1) for i in range(0, 11)]
 
 
+
 class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
     """
     Paired vehicle recourse with adaptive alpha at split vertices.
@@ -159,6 +116,11 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
                  oracle_mode: Optional[str] = None, oracle_samples: int = 50,
                  rng=None):
         super().__init__(paired_routes)
+        if alpha_policy is None and oracle_mode is None:
+            raise ValueError(
+                "AdaptivePairedVehicleRecourse requires either alpha_policy or oracle_mode — "
+                "both are None, which would silently fall back to node.alpha for all splits"
+            )
         self.alpha_policy = alpha_policy
         self.oracle_mode = oracle_mode  # None | 'oracle_true' | 'oracle_avg'
         self.oracle_samples = oracle_samples
@@ -192,9 +154,11 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
             next_node = customers[i + 1] if i + 1 < len(customers) else nodes[0]
 
             if node.is_split:
-                # demand_total is the full customer demand draw (unscaled by alpha)
-                alpha = self.alpha_policy(remaining, demand_total, node, paired_route)
-                alpha = float(np.clip(alpha, 0.0, 1.0))
+                if self.alpha_policy is not None:
+                    alpha = self.alpha_policy(remaining, demand_total, node, paired_route)
+                    alpha = float(np.clip(alpha, 0.0, 1.0))
+                else:
+                    alpha = float(np.clip(node.alpha, 0.0, 1.0))
                 demand = demand_total * alpha
             else:
                 demand = demand_total
@@ -218,7 +182,7 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
 
     def _sim_from(self, route: Route, customers: list, start: int,
                   remaining: float, demands: List[float]) -> float:
-        """Simulate customers[start:] with pre-scaled demands, return recourse cost."""
+        """Simulate customers[start:] with unscaled demands, return recourse cost."""
         total = 0.0
         for k, (node, demand) in enumerate(zip(customers[start:], demands)):
             next_node = customers[start + k + 1] if start + k + 1 < len(customers) else route.nodes[0]
@@ -256,19 +220,28 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
 
     def _best_alpha_by_sampling(self, route: Route, customers: list,
                                  split_idx: int, remaining: float,
-                                 demand_total: float) -> float:
-        """Sample oracle_samples future demand vectors; return alpha with min average cost."""
+                                 demand_total: float,
+                                 r2: Route = None, r2_customers: list = None,
+                                 original_id: int = None) -> float:
+        """Sample oracle_samples future demand vectors; return alpha minimising E[cost_r1 + cost_r2]."""
         node = customers[split_idx]
         next_node = customers[split_idx + 1] if split_idx + 1 < len(customers) else route.nodes[0]
         future_customers = customers[split_idx + 1:]
         alpha_totals = {a: 0.0 for a in _ORACLE_ALPHA_GRID}
 
         for _ in range(self.oracle_samples):
-            future_demands = [
+            # Sample unscaled demands — _sim_from and _sim_with_alpha handle split scaling internally
+            future_demands_r1 = [
                 float(route.instance.get_demand_distribution(nd).rvs(random_state=self.rng))
-                * (nd.alpha if nd.is_split else 1.0)
                 for nd in future_customers
             ]
+            future_demands_r2 = None
+            if r2 is not None and r2_customers is not None:
+                future_demands_r2 = [
+                    float(r2.instance.get_demand_distribution(nd).rvs(random_state=self.rng))
+                    for nd in r2_customers
+                ]
+
             for alpha in _ORACLE_ALPHA_GRID:
                 d = demand_total * alpha
                 if d > remaining + 1e-9:
@@ -277,7 +250,13 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
                     c, rem = self._handle_type2_failure(route, node, next_node)
                 else:
                     c, rem = 0.0, remaining - d
-                c += self._sim_from(route, customers, split_idx + 1, rem, future_demands)
+                c += self._sim_from(route, customers, split_idx + 1, rem, future_demands_r1)
+
+                # Add r2's expected cost with complement alpha
+                if future_demands_r2 is not None:
+                    c += self._sim_with_alpha(r2, r2_customers, future_demands_r2,
+                                              round(1.0 - alpha, 10), original_id)
+
                 alpha_totals[alpha] += c
 
         return min(alpha_totals, key=lambda a: alpha_totals[a])
@@ -316,8 +295,11 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
                 if complement_alpha is not None and getattr(node, "original_id", node.id) == original_id:
                     alpha = float(np.clip(1.0 - complement_alpha, 0.0, 1.0))
                 else:
-                    alpha = self.alpha_policy(remaining, demand_total, node, paired_route)
-                    alpha = float(np.clip(alpha, 0.0, 1.0))
+                    if self.alpha_policy is None:
+                        alpha = float(np.clip(node.alpha, 0.0, 1.0))
+                    else:
+                        alpha = self.alpha_policy(remaining, demand_total, node, paired_route)
+                        alpha = float(np.clip(alpha, 0.0, 1.0))
                     alpha_used = alpha
                 demand = demand_total * alpha
             else:
@@ -354,9 +336,16 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
         costs_r1 = np.zeros(N)
         costs_r2 = np.zeros(N)
 
+        # For all implementable methods: r1 = vehicle that arrives at split node first.
+        # oracle_true doesn't need this (hindsight), but apply consistently anyway.
+        if self._dist_to_split(r1, original_id) > self._dist_to_split(r2, original_id):
+            r1, r2 = r2, r1
+            demands_r1, demands_r2 = demands_r2, demands_r1
+
+        r1_customers = [n for n in r1.nodes if not n.is_depot]
+        r2_customers = [n for n in r2.nodes if not n.is_depot]
+
         if self.oracle_mode == 'oracle_true':
-            r1_customers = [n for n in r1.nodes if not n.is_depot]
-            r2_customers = [n for n in r2.nodes if not n.is_depot]
             for i in range(N):
                 best_cost = float('inf')
                 best_alpha = 0.0
@@ -370,13 +359,11 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
                 costs_r2[i] = self._sim_with_alpha(r2, r2_customers, demands_r2[i], round(1.0 - best_alpha, 10), original_id)
 
         elif self.oracle_mode == 'oracle_avg':
-            # r1 = route whose vehicle arrives at the split node first (closer to depot)
-            if self._dist_to_split(r1, original_id) > self._dist_to_split(r2, original_id):
-                r1, r2 = r2, r1
-                demands_r1, demands_r2 = demands_r2, demands_r1
-            r1_customers = [n for n in r1.nodes if not n.is_depot]
             for i in range(N):
-                cost_r1, alpha_r1 = self._simulate_oracle_avg(r1, r1_customers, demands_r1[i])
+                cost_r1, alpha_r1 = self._simulate_oracle_avg(
+                    r1, r1_customers, demands_r1[i],
+                    r2=r2, r2_customers=r2_customers, original_id=original_id,
+                )
                 cost_r2, _ = self._simulate_route(
                     r2, demands_r2[i], paired_route=r1,
                     complement_alpha=alpha_r1, original_id=original_id,
@@ -396,10 +383,12 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
         return costs_r1, costs_r2
 
     def _simulate_oracle_avg(self, route: Route, customers: list,
-                              demands: List[float]):
+                              demands: List[float],
+                              r2: Route = None, r2_customers: list = None,
+                              original_id: int = None):
         """
         Simulate route for oracle_avg: at each split node, sample future demands
-        and pick the alpha minimising expected cost. r2 will use the complement.
+        for both r1 and r2, pick alpha minimising E[cost_r1 + cost_r2].
         Returns (recourse_cost, alpha_used_at_split).
         """
         Q = route.instance.vehicle_capacity
@@ -411,7 +400,10 @@ class AdaptivePairedVehicleRecourse(PairedVehicleRecourse):
             next_node = customers[i + 1] if i + 1 < len(customers) else route.nodes[0]
 
             if node.is_split:
-                alpha = self._best_alpha_by_sampling(route, customers, i, remaining, demand_total)
+                alpha = self._best_alpha_by_sampling(
+                    route, customers, i, remaining, demand_total,
+                    r2=r2, r2_customers=r2_customers, original_id=original_id,
+                )
                 alpha_used = alpha
                 demand = demand_total * alpha
             else:

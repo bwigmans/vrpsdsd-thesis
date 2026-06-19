@@ -1,0 +1,108 @@
+{
+  "seed": 43,
+  "base_cost": 1492.5818507608708,
+  "exact": {
+    "customer": 2,
+    "r1": 1,
+    "r2": 6,
+    "score": -54.305142
+  },
+  "oracle": {
+    "customer": 4,
+    "r1": 6,
+    "r2": 1,
+    "score": -56.15642
+  },
+  "table": [
+    {
+      "customer": 4,
+      "r1": 6,
+      "r2": 1,
+      "oracle": -56.1564,
+      "best_fixed": -52.5476,
+      "premium": -3.6088,
+      "best_exact": -53.203
+    },
+    {
+      "customer": 2,
+      "r1": 1,
+      "r2": 6,
+      "oracle": -54.4679,
+      "best_fixed": -52.7911,
+      "premium": -1.6768,
+      "best_exact": -54.3051
+    },
+    {
+      "customer": 6,
+      "r1": 1,
+      "r2": 6,
+      "oracle": -54.2505,
+      "best_fixed": -50.3618,
+      "premium": -3.8887,
+      "best_exact": -51.467
+    },
+    {
+      "customer": 8,
+      "r1": 6,
+      "r2": 1,
+      "oracle": -53.0167,
+      "best_fixed": -48.3078,
+      "premium": -4.7089,
+      "best_exact": -49.3181
+    },
+    {
+      "customer": 4,
+      "r1": 6,
+      "r2": 8,
+      "oracle": -45.487,
+      "best_fixed": -9.2443,
+      "premium": -36.2427,
+      "best_exact": -16.8341
+    },
+    {
+      "customer": 8,
+      "r1": 6,
+      "r2": 8,
+      "oracle": -43.0863,
+      "best_fixed": -0.1717,
+      "premium": -42.9146,
+      "best_exact": -4.8504
+    },
+    {
+      "customer": 2,
+      "r1": 1,
+      "r2": 8,
+      "oracle": -38.9671,
+      "best_fixed": -5.2829,
+      "premium": -33.6842,
+      "best_exact": -12.1224
+    },
+    {
+      "customer": 6,
+      "r1": 1,
+      "r2": 8,
+      "oracle": -37.8025,
+      "best_fixed": -2.4781,
+      "premium": -35.3245,
+      "best_exact": -7.6586
+    },
+    {
+      "customer": 22,
+      "r1": 0,
+      "r2": 5,
+      "oracle": -7.3457,
+      "best_fixed": 2.4234,
+      "premium": -9.7691,
+      "best_exact": -0.784
+    },
+    {
+      "customer": 12,
+      "r1": 4,
+      "r2": 3,
+      "oracle": -5.9573,
+      "best_fixed": -0.5397,
+      "premium": -5.4176,
+      "best_exact": 0.2254
+    }
+  ]
+}

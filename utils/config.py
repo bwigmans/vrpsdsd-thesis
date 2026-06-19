@@ -53,6 +53,9 @@ class Configuration:
     alpha_grid: Optional[List[float]] = None
     alpha_reoptimize: bool = False
 
+    # Oracle splits: use coordinated oracle_true for all split cost evaluation
+    use_oracle_splits: bool = False
+
     # Post-processing restart: lock split nodes from removal
     lock_splits: bool = False
 

@@ -133,15 +133,18 @@ class MonteCarloStrategy(SamplingStrategy):
     def _generate_demands(self, route: Route, rng: np.random.Generator) -> List[float]:
         """
         Generate one demand realization for all customers on the route.
-        Returns list of demands (scaled by alpha for split nodes) in customer order.
+        For non-adaptive policies: split node demands are pre-scaled by node.alpha.
+        For adaptive policies: full unscaled demand is returned — the policy applies alpha itself.
         Works for any scipy demand distribution stored on the node.
         """
+        from core.recourse import AdaptivePairedVehicleRecourse
+        is_adaptive = isinstance(self.recourse_policy, AdaptivePairedVehicleRecourse)
         customers = [n for n in route.nodes if not n.is_depot]
         demands = []
         for node in customers:
             dist = route.instance.get_demand_distribution(node)
             demand = float(dist.rvs(random_state=rng))
-            if node.is_split:
+            if node.is_split and not is_adaptive:
                 demand = demand * node.alpha
             demands.append(demand)
         return demands

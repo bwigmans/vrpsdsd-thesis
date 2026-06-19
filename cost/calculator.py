@@ -5,9 +5,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.recourse import RecoursePolicy
 from core.route import Route
-from core.instance import Node, ProblemInstance
 import numpy as np
-from cost.sampling_strategy import MonteCarloStrategy
 
 
 class CostCalculator(ABC):
@@ -95,71 +93,3 @@ class ExactCostCalculator(CostCalculator):
         if self._cache is not None:
             self._cache[sig] = total
         return total
-    
-class MonteCarloCostCalculator(CostCalculator):
-    """Cost calculator that approximates expected recourse cost via Monte Carlo sampling."""
-
-    def __init__(self, recourse_policy: RecoursePolicy, num_samples: int = 1000, seed: int = None):
-        self.recourse_policy = recourse_policy
-        self.num_samples = num_samples
-        self.seed = seed
-        self.strategy = MonteCarloStrategy(
-            self.recourse_policy,
-            num_samples=self.num_samples,
-            seed=self.seed,
-            parallel=False,
-        )
-
-    def compute_recourse_cost(
-        self, route: Route, samples: Optional[np.ndarray] = None,
-        paired_route: Optional[Route] = None,
-    ) -> float:
-        sample_costs = self.strategy.sample(
-            route, num_samples=self.num_samples, samples=samples,
-            paired_route=paired_route,
-        )
-        sample_mean = np.mean(sample_costs)
-        return float(sample_mean)
-    
-if __name__ == "__main__":
-    # Test ExactCostCalculator with a simple route
-   
-   
-    # from core.recourse import RecoursePolicy  # placeholder, not used
-    
-
-    # Create a dummy recourse policy (not used by calculator)
-    class DummyRecoursePolicy(RecoursePolicy):
-        def compute_cost(self, route, demand_realization):
-            raise NotImplementedError
-
-    # Create nodes
-    depot = Node(0, 0.0, 0.0, 0.0, is_depot=True)
-    cust1 = Node(1, 3.0, 4.0, 2.5)          # unsplit, lambda=2.5
-    cust2 = Node(2, 6.0, 8.0, 1.2)          # unsplit, lambda=1.2
-    cust_split = Node(3, 5.0, 5.0, 8.0, is_split=True, alpha=0.6)  # split, 60% = 4.8
-
-    # Instance with capacity 10
-    instance = ProblemInstance([depot, cust1, cust2, cust_split], vehicle_capacity=10.0)
-
-    # Build route: depot -> cust1 -> cust2 -> depot
-    route1 = Route([depot, cust1, cust2, depot], instance)
-
-    # Build route with split node: depot -> cust_split -> depot
-    route2 = Route([depot, cust_split, depot], instance)
-
-    # Cost calculator
-    calc = ExactCostCalculator(DummyRecoursePolicy())
-    print("=== Testing ExactCostCalculator ===")
-    print("Route 1 (unsplit):")
-    print(f"  Travel cost: {route1.travel_cost():.2f}")
-    print(f"  Expected recourse cost: {calc.compute_recourse_cost(route1):.6f}")
-    print(f"  Total expected cost: {calc.total_expected_cost(route1):.2f}")
-
-    print("\nRoute 2 (split node, alpha=0.6):")
-    print(f"  Planned demand: {route2.expected_load():.2f}")
-    print(f"  Travel cost: {route2.travel_cost():.2f}")
-    print(f"  Failure prob: {route2.failure_probabilities()[0]:.6f}")
-    print(f"  Second-type prob: {route2.second_type_failure_probability(1):.6f}")
-    print(f"  Expected recourse cost: {calc.compute_recourse_cost(route2):.6f}")
-    print(f"  Total expected cost: {calc.total_expected_cost(route2):.2f}")

@@ -1,7 +1,6 @@
 from typing import Optional, Tuple
 
 import numpy as np
-from scipy.optimize import brentq
 from scipy import stats as scipy_stats
 
 from core.route import Route
@@ -20,10 +19,7 @@ def _route_variance(route: Route) -> float:
     for n in route.nodes:
         if n.is_depot:
             continue
-        try:
-            v = float(route.instance.get_demand_distribution(n).var())
-        except Exception:
-            v = n.mean_demand  # Poisson fallback: Var = mean
+        v = float(route.instance.get_demand_distribution(n).var())
         total_var += (n.alpha ** 2) * v if n.is_split else v
     return total_var
 
@@ -57,51 +53,37 @@ def compute_alpha(
 
     if policy == "lei":
         total = n1 + n2
-        alpha1 = n2 / total if total > 0 else 0.5
+        if total <= 0:
+            raise ValueError(f"lei policy: total route load is zero (n1={n1}, n2={n2})")
+        alpha1 = n2 / total
 
     elif policy == "equalize_slack":
-        # Set remaining slack equal: Q-n1-α·μ = Q-n2-(1-α)·μ → α = 0.5 + (n2-n1)/(2μ)
-        if mu > 0:
-            alpha1 = 0.5 + (n2 - n1) / (2.0 * mu)
-        else:
-            total = n1 + n2
-            alpha1 = n2 / total if total > 0 else 0.5
+        if mu <= 0:
+            raise ValueError(f"equalize_slack: split customer mean demand is zero (mu={mu})")
+        alpha1 = 0.5 + (n2 - n1) / (2.0 * mu)
 
     elif policy == "equalize_std_slack":
-        # Equalize standardized slack: (Q-n1-α·μ)/std1 = (Q-n2-(1-α)·μ)/std2
-        # → α = [(Q-n1)·std2 - (Q-n2)·std1 + μ·std1] / [μ·(std1+std2)]
+        if mu <= 0:
+            raise ValueError(f"equalize_std_slack: split customer mean demand is zero (mu={mu})")
         std1 = max(_route_variance(r1) ** 0.5, 1e-9)
         std2 = max(_route_variance(r2) ** 0.5, 1e-9)
-        if mu > 0:
-            alpha1 = ((Q - n1) * std2 - (Q - n2) * std1 + mu * std1) / (mu * (std1 + std2))
-        else:
-            alpha1 = 0.5
+        alpha1 = ((Q - n1) * std2 - (Q - n2) * std1 + mu * std1) / (mu * (std1 + std2))
 
     elif policy == "marginal_cost":
-        # Equalize marginal failure cost: c1·P(D_r1 > Q-α·μ) = c2·P(D_r2 > Q-(1-α)·μ)
-        # Solved via bisection.
+        if mu <= 0:
+            raise ValueError(f"marginal_cost: split customer mean demand is zero (mu={mu})")
         c1 = max(_route_failure_cost(r1), 1e-9)
         c2 = max(_route_failure_cost(r2), 1e-9)
         var1 = _route_variance(r1)
         var2 = _route_variance(r2)
         mu_val = max(mu, 1e-9)
 
-        def objective(a: float) -> float:
-            return (c1 * _survival(n1, var1, Q - a * mu_val)
-                    - c2 * _survival(n2, var2, Q - (1.0 - a) * mu_val))
+        def objective_abs(a: float) -> float:
+            return abs(c1 * _survival(n1, var1, Q - a * mu_val)
+                       - c2 * _survival(n2, var2, Q - (1.0 - a) * mu_val))
 
-        try:
-            f0, f1 = objective(1e-6), objective(1.0 - 1e-6)
-            if f0 * f1 < 0:
-                alpha1 = brentq(objective, 1e-6, 1.0 - 1e-6, maxiter=20)
-            else:
-                # Corner: push load to cheaper-failure vehicle
-                alpha1 = 1.0 - 1e-6 if c1 < c2 else 1e-6
-        except Exception:
-            alpha1 = 0.5
-
-    elif policy == "adaptive":
-        alpha1 = 0.5
+        from scipy.optimize import minimize_scalar
+        alpha1 = minimize_scalar(objective_abs, bounds=(0.01, 0.99), method='bounded').x
 
     else:
         raise ValueError(f"Unknown alpha_policy: {policy}")
@@ -136,38 +118,36 @@ def make_recourse_alpha_policy(policy: str):
 
     def _equalize_slack(q1_rem, xi_v, node, paired_route):
         if xi_v <= 0:
-            return node.alpha
+            raise ValueError(f"equalize_slack: realized demand xi_v={xi_v} <= 0 at node {node.id}")
+        if paired_route is None:
+            raise ValueError(f"equalize_slack: paired_route is None for node {node.id}")
         q2_rem = _q2_exp_remaining(node, paired_route)
         if q2_rem is None:
-            return node.alpha
+            raise ValueError(f"equalize_slack: could not compute q2_rem for node {node.id}")
         alpha = (q1_rem - q2_rem + xi_v) / (2.0 * xi_v)
         return float(np.clip(alpha, 0.01, 0.99))
 
     def _marginal_cost(q1_rem, xi_v, node, paired_route):
-        if paired_route is None or xi_v <= 0:
-            return node.alpha
+        if paired_route is None:
+            raise ValueError(f"marginal_cost: paired_route is None for node {node.id}")
+        if xi_v <= 0:
+            raise ValueError(f"marginal_cost: realized demand xi_v={xi_v} <= 0 at node {node.id}")
         q2_rem = _q2_exp_remaining(node, paired_route)
         if q2_rem is None:
-            return node.alpha
+            raise ValueError(f"marginal_cost: could not compute q2_rem for node {node.id}")
         c1 = _route_failure_cost_from_node(node, paired_route, side="r1")
         c2 = _route_failure_cost_from_node(node, paired_route, side="r2")
-        # future_mean: proxy for future load mean after split vertex
         future_mean = max(node.mean_demand, 1e-9)
         var1 = var2 = future_mean
         xi = max(xi_v, 1e-9)
 
-        def objective(a):
-            return (c1 * _survival(future_mean, var1, q1_rem - a * xi)
-                    - c2 * _survival(future_mean, var2, q2_rem - (1.0 - a) * xi))
-        try:
-            f0, f1 = objective(1e-6), objective(1.0 - 1e-6)
-            if f0 * f1 < 0:
-                alpha = brentq(objective, 1e-6, 1.0 - 1e-6, maxiter=15)
-            else:
-                alpha = 1.0 - 1e-6 if c1 < c2 else 1e-6
-        except Exception:
-            alpha = node.alpha
-        return float(np.clip(alpha, 0.01, 0.99))
+        def objective_abs(a):
+            return abs(c1 * _survival(future_mean, var1, q1_rem - a * xi)
+                       - c2 * _survival(future_mean, var2, q2_rem - (1.0 - a) * xi))
+
+        from scipy.optimize import minimize_scalar
+        result = minimize_scalar(objective_abs, bounds=(0.01, 0.99), method='bounded')
+        return float(np.clip(result.x, 0.01, 0.99))
 
     policies = {"lei": _lei, "equalize_slack": _equalize_slack, "marginal_cost": _marginal_cost}
     if policy not in policies:

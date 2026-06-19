@@ -1,0 +1,45 @@
+{
+  "seed": 42,
+  "sample_base_cost": 836.6985560110165,
+  "exact": {
+    "customer": 1,
+    "r1": 1,
+    "r2": 6,
+    "score": -1.018055
+  },
+  "oracle": {
+    "customer": 16,
+    "r1": 3,
+    "r2": 4,
+    "score": -5.46727
+  },
+  "table": [
+    {
+      "customer": 1,
+      "r1": 1,
+      "r2": 6,
+      "oracle": -4.417,
+      "best_fixed": 0.1074,
+      "premium": -4.5243,
+      "best_exact": -1.0181
+    },
+    {
+      "customer": 4,
+      "r1": 1,
+      "r2": 6,
+      "oracle": -4.3506,
+      "best_fixed": 0.7017,
+      "premium": -5.0523,
+      "best_exact": -0.5079
+    },
+    {
+      "customer": 7,
+      "r1": 1,
+      "r2": 2,
+      "oracle": -3.168,
+      "best_fixed": 0.608,
+      "premium": -3.776,
+      "best_exact": -0.0091
+    }
+  ]
+}

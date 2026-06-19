@@ -270,14 +270,14 @@ class RecourseWorstRemoval(RemovalOperator):
             if existing is None or cost > existing[0]:
                 best_by_key[key] = (cost, node)
 
-        for _, node in best_by_key.values():
+        for node_cost, node in best_by_key.values():
             route = route_of.get(node)
             if route is None:
                 continue
             customers = [n for n in route.nodes if not n.is_depot]
             if len(customers) <= 1:
                 continue
-            per_route.setdefault(route, []).append((cost, node))
+            per_route.setdefault(route, []).append((node_cost, node))
 
         for route in per_route:
             per_route[route].sort(key=lambda item: item[0], reverse=True)
@@ -362,19 +362,65 @@ class SplitInsertion(InsertionOperator):
         operator_calculator: 'CostCalculator' = None,
         alpha_policy: str = "lei",
         alpha_grid: Optional[List[float]] = None,
+        oracle_rec=None,
+        get_samples=None,
     ):
         self.operator_calculator = operator_calculator
         self.alpha_policy = alpha_policy
         self.alpha_grid = alpha_grid
+        self._oracle_rec = oracle_rec      # AdaptivePairedVehicleRecourse(oracle_mode='oracle_true')
+        self._get_samples = get_samples    # callable -> current sample dict
         # Diagnostic stats reset each ALNS run
         self.stats = {
-            'splits_attempted': 0,    # times a split pair was found and inserted
-            'alpha_chosen': [],       # alpha1 value chosen for each split
-            'position_r1': [],        # normalized position in r1 (0=first, 1=last customer)
-            'position_r2': [],        # normalized position in r2
-            'r1_len': [],             # num customers in r1 at split time
-            'r2_len': [],             # num customers in r2 at split time
+            'splits_attempted': 0,
+            'alpha_chosen': [],
+            'position_r1': [],
+            'position_r2': [],
+            'r1_len': [],
+            'r2_len': [],
         }
+
+    def _oracle_pair_score(self, r1, r2, node1, node2, pos1, pos2):
+        """Score a split pair using coordinated oracle_true evaluation.
+        Returns delta vs base (negative = improvement). Alpha is irrelevant —
+        oracle_true finds the best alpha per sample internally."""
+        import numpy as np
+        from core.route import Route
+        from core.recourse import PairedVehicleRecourse
+
+        samples = self._get_samples() if self._get_samples is not None else None
+        if samples is None:
+            return float('inf')
+
+        # Build trial routes with split nodes at chosen positions
+        r1_trial = Route(r1.nodes[:pos1] + [node1] + r1.nodes[pos1:], r1.instance)
+        r2_trial = Route(r2.nodes[:pos2] + [node2] + r2.nodes[pos2:], r2.instance)
+
+        N = len(next(iter(samples.values())))
+        original_id = getattr(node1, 'original_id', node1.id)
+
+        # Demand arrays for trial routes (unscaled — oracle handles alpha internally)
+        r1_custs = [n for n in r1_trial.nodes if not n.is_depot]
+        r2_custs = [n for n in r2_trial.nodes if not n.is_depot]
+        demands_r1 = [[float(samples[getattr(n, 'original_id', n.id)][i]) for n in r1_custs] for i in range(N)]
+        demands_r2 = [[float(samples[getattr(n, 'original_id', n.id)][i]) for n in r2_custs] for i in range(N)]
+
+        # Oracle coordinated split cost
+        costs_r1, costs_r2 = self._oracle_rec.compute_split_pair_costs(
+            r1_trial, r2_trial, demands_r1, demands_r2, original_id
+        )
+
+        # Base cost for original routes (no split nodes — standard PairedVehicleRecourse)
+        base_rec = PairedVehicleRecourse()
+        r1_base_custs = [n for n in r1.nodes if not n.is_depot]
+        r2_base_custs = [n for n in r2.nodes if not n.is_depot]
+        base_r1 = np.array([base_rec.compute_cost(r1, [float(samples[n.id][i]) for n in r1_base_custs]) for i in range(N)])
+        base_r2 = np.array([base_rec.compute_cost(r2, [float(samples[n.id][i]) for n in r2_base_custs]) for i in range(N)])
+
+        travel_delta = (r1_trial.travel_cost() + r2_trial.travel_cost()
+                        - r1.travel_cost() - r2.travel_cost())
+
+        return float(np.mean(costs_r1 + costs_r2 - base_r1 - base_r2)) + travel_delta
 
     def insert(
         self,
@@ -446,6 +492,7 @@ class SplitInsertion(InsertionOperator):
                     is_depot=False,
                     is_split=True,
                     alpha=alpha1,
+                    demand_distribution=node.demand_distribution,
                 )
                 node1.original_id = node.id
 
@@ -457,6 +504,7 @@ class SplitInsertion(InsertionOperator):
                     is_depot=False,
                     is_split=True,
                     alpha=alpha2,
+                    demand_distribution=node.demand_distribution,
                 )
                 node2.original_id = node.id
 
@@ -500,7 +548,10 @@ class SplitInsertion(InsertionOperator):
                             if pos1 is None or pos2 is None:
                                 continue
 
-                            pair_cost = inc1 + inc2
+                            if self._oracle_rec is not None:
+                                pair_cost = self._oracle_pair_score(r1, r2, node1, node2, pos1, pos2)
+                            else:
+                                pair_cost = inc1 + inc2
                             if pair_cost < best_pair_cost:
                                 best_pair_cost = pair_cost
                                 best_pair = (r1, r2)

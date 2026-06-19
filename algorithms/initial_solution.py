@@ -5,7 +5,7 @@ import numpy as np
 from core.instance import ProblemInstance, Node 
 from core.solution import Solution, Route
 from typing import List, Optional
-from cost.calculator import CostCalculator, ExactCostCalculator, MonteCarloCostCalculator
+from cost.calculator import CostCalculator, ExactCostCalculator
 from cost.sampling import SamplingCostCalculator
 from cost.sampling_strategy import MonteCarloStrategy
 from core.recourse import RecoursePolicy, PairedVehicleRecourse 
@@ -244,9 +244,6 @@ if __name__ == "__main__":
     exact_calc = ExactCostCalculator(PairedVehicleRecourse())
     print(f"Exact total expected cost: {solution.get_total_cost(exact_calc):.2f}")
     print(f"Total travel cost: {solution.total_travel_cost():.2f}")
-
-    sampling_calc = MonteCarloCostCalculator(PairedVehicleRecourse(), num_samples=1000, seed=42)
-    print(f"Sampling total expected cost: {solution.get_total_cost(sampling_calc):.2f}")
 
     for i, route in enumerate(solution.routes):
         print(f"Route {i+1}: {[n.id for n in route.nodes]}")

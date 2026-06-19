@@ -44,6 +44,13 @@ class ALNSSolver:
 
         self.recourse_policy = recourse_policy if recourse_policy is not None else PairedVehicleRecourse()
 
+        # Oracle splits: coordinated oracle_true evaluation for all split scoring
+        from core.recourse import AdaptivePairedVehicleRecourse
+        self.oracle_rec = (
+            AdaptivePairedVehicleRecourse(oracle_mode='oracle_true')
+            if getattr(config, 'use_oracle_splits', False) else None
+        )
+
         self.sample_bank = None
         if config.cost_method == "exact":
             self.operator_calculator = ExactCostCalculator(self.recourse_policy, cache=True)
@@ -91,6 +98,9 @@ class ALNSSolver:
                 operator_calculator=self.operator_calculator,
                 alpha_policy=config.alpha_policy,
                 alpha_grid=config.alpha_grid,
+                oracle_rec=self.oracle_rec,
+                get_samples=(lambda: self.operator_strategy._precomputed)
+                             if self.oracle_rec is not None else None,
             ),
         ] + ec_operators + (extra_insertion_operators or [])
 
@@ -106,6 +116,15 @@ class ALNSSolver:
         self.insertion_breakdown = [{'new_best': 0, 'improved': 0, 'accepted': 0, 'rejected': 0}
                                     for _ in self.insertion_operators]
 
+    def _eval_solution(self, solution: Solution) -> float:
+        """Evaluate solution cost. When oracle_splits is active, uses coordinated
+        oracle_true for paired split routes; PairedVehicleRecourse for the rest."""
+        if self.oracle_rec is not None and self.sample_bank is not None:
+            samples = self.operator_strategy._precomputed
+            if samples is not None:
+                return solution.get_total_cost_adaptive(self.oracle_rec, samples)
+        return solution.get_total_cost(self.operator_calculator)
+
     def solve(self, initial_solution: Solution = None) -> Solution:
         """Main ALNS optimization loop."""
         exact_calc = ExactCostCalculator(self.recourse_policy)
@@ -113,7 +132,7 @@ class ALNSSolver:
 
         current_solution = initial_solution.copy()
         best_solution = initial_solution.copy()
-        record_cost = best_solution.get_total_cost(self.evaluation_calculator)
+        record_cost = self._eval_solution(best_solution)
         deviation = self.config.rrt_deviation_factor * record_cost
         current_cost = record_cost
         iterations_without_improvement = 0
@@ -138,7 +157,7 @@ class ALNSSolver:
             )
             new_solution = self._apply_insertion(new_solution, insertion_op, removed)
 
-            new_cost = new_solution.get_total_cost(self.operator_calculator)
+            new_cost = self._eval_solution(new_solution)
 
             score = self._compute_score(new_cost, current_cost, record_cost)
             self.removal_scores[removal_idx] += score
@@ -156,9 +175,8 @@ class ALNSSolver:
                 if new_cost < record_cost:
                     if self.config.alpha_reoptimize:
                         self._reoptimize_alphas(current_solution, label="new-best")
-                    accurate_cost = current_solution.get_total_cost(self.evaluation_calculator)
+                    accurate_cost = self._eval_solution(current_solution)
                     current_cost = accurate_cost
-                    # Only update record if accurate eval confirms improvement
                     if accurate_cost < record_cost:
                         best_solution = current_solution.copy()
                         record_cost = accurate_cost
@@ -172,7 +190,7 @@ class ALNSSolver:
             if (iteration + 1) % self.config.alns_segment_length == 0:
                 if self.config.alpha_reoptimize:
                     self._reoptimize_alphas(current_solution, label="segment")
-                    current_cost = current_solution.get_total_cost(self.evaluation_calculator)
+                    current_cost = self._eval_solution(current_solution)
                 self._update_weights()
                 self._reset_scores()
 

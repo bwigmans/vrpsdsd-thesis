@@ -80,7 +80,8 @@ def build_split_routes(sol, cid, r1_idx, r2_idx, alpha, calc):
     if not tr1.is_feasible():
         return None, None, None
     partner = Node(cid, node.x, node.y, node.mean_demand,
-                   is_split=True, alpha=round(1.0 - alpha, 10))
+                   is_split=True, alpha=round(1.0 - alpha, 10),
+                   demand_distribution=node.demand_distribution)
     partner.original_id = cid
     pos = best_insertion_pos(tr2, partner, calc)
     if pos is None:
@@ -179,22 +180,29 @@ def search_phase1(sol, calc, samples):
     best = {
         "exact":  (float("inf"), None),
         "oracle": (float("inf"), None),
+        "cvar":   (float("inf"), None),
     }
     table = []
 
     for r1_idx, r1 in enumerate(sol.routes):
+        if any(n.is_split for n in r1.nodes if not n.is_depot):
+            continue  # route already has a split
         customers = [n for n in r1.nodes if not n.is_depot and not n.is_split]
         for node in customers:
             for r2_idx in range(len(sol.routes)):
                 if r2_idx == r1_idx:
                     continue
                 r2 = sol.routes[r2_idx]
+                if any(n.is_split for n in r2.nodes if not n.is_depot):
+                    continue  # partner route already has a split
                 if not any(n for n in r2.nodes if not n.is_depot):
                     continue
 
                 best_exact = float("inf")
                 best_fixed = float("inf")  # min mean across alphas
+                best_cvar  = float("inf")  # min CVaR across alphas
                 best_tr_pair = None        # route pair for oracle (uses best-mean alpha)
+                best_tr_pair_cvar = None   # route pair for cvar
 
                 for alpha in ALPHA_GRID:
                     trial, tr1, tr2 = build_split_routes(
@@ -206,12 +214,16 @@ def search_phase1(sol, calc, samples):
                     e = exact_delta(sol, tr1, tr2, r1_idx, r2_idx, calc)
                     deltas = sample_delta_pair(sol, tr1, tr2, r1_idx, r2_idx, samples)
                     m = float(deltas.mean())
+                    cv = cvar(deltas)
 
                     if e < best_exact:
                         best_exact = e
                     if m < best_fixed:
                         best_fixed = m
                         best_tr_pair = (tr1, tr2)
+                    if cv < best_cvar:
+                        best_cvar = cv
+                        best_tr_pair_cvar = (tr1, tr2)
 
                 if best_tr_pair is None:
                     continue
@@ -226,13 +238,17 @@ def search_phase1(sol, calc, samples):
                 if o < best["oracle"][0]:
                     best["oracle"] = (o, dict(customer=node.id, r1=r1_idx,
                                               r2=r2_idx, score=round(o, 6)))
+                if best_cvar < best["cvar"][0]:
+                    best["cvar"] = (best_cvar, dict(customer=node.id, r1=r1_idx,
+                                                     r2=r2_idx, score=round(best_cvar, 6)))
 
-                # Filter: oracle negative AND at least one of exact/best_fixed negative
+                # Filter: oracle negative AND at least one of exact/mean/cvar negative
                 if o < -0.001 and (best_exact < -0.001 or best_fixed < -0.001):
                     table.append(dict(
                         customer=node.id, r1=r1_idx, r2=r2_idx,
                         oracle=round(o, 4),
                         best_fixed=round(best_fixed, 4),
+                        best_cvar=round(best_cvar, 4),
                         premium=round(premium, 4),
                         best_exact=round(best_exact, 4),
                     ))
